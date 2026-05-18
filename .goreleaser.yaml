@@ -1,0 +1,63 @@
+version: 2
+
+project_name: nerve
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nerve
+    main: ./cmd/nerve
+    binary: nerve
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/mascah/nerve/internal/version.Version={{ .Version }}
+
+archives:
+  - id: nerve
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE*
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+# Homebrew tap publishing. Uncomment + adjust once mascah/homebrew-tap exists.
+# brews:
+#   - name: nerve
+#     repository:
+#       owner: mascah
+#       name: homebrew-tap
+#       branch: main
+#     homepage: "https://github.com/mascah/nerve"
+#     description: "Worktree manager with Claude Code integration"
+#     license: "MIT"
+#     install: |
+#       bin.install "nerve"
+#     test: |
+#       system "#{bin}/nerve", "version"
