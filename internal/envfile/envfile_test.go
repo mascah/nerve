@@ -76,7 +76,7 @@ func TestAppendToClaudeEnv(t *testing.T) {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	raw, _ := os.ReadFile(envPath)
-	if string(raw) != "FOO=1\nBAR=2\n" {
+	if string(raw) != "export FOO=1\nexport BAR=2\n" {
 		t.Errorf("got %q", string(raw))
 	}
 }

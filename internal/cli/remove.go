@@ -55,6 +55,10 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		switch {
 		case errors.Is(err, worktree.ErrDirty):
 			printErr(cmd, "worktree has uncommitted changes — use --force to override")
+			var de *worktree.DirtyError
+			if errors.As(err, &de) && len(de.Files) > 0 {
+				printDirtyFiles(cmd, de.Files, 25)
+			}
 			return exitCodeError{Code: ExitDirty, Err: err}
 		case errors.Is(err, worktree.ErrUnpushed):
 			printErr(cmd, "worktree has unpushed commits — use --force to override")
@@ -124,5 +128,25 @@ func resolveRemoveTarget(args []string) (repoRoot, wtPath, branch string, entry 
 
 	default:
 		return "", "", "", nil, fmt.Errorf("provide either no args (use cwd) or <project> <branch>")
+	}
+}
+
+// printDirtyFiles writes a preview of dirty files to cmd.ErrOrStderr, truncated at
+// max entries. The output includes a header line with the shown / total counts and,
+// if truncated, a trailing "... N more" line.
+func printDirtyFiles(cmd *cobra.Command, files []string, max int) {
+	total := len(files)
+	shown := total
+	if shown > max {
+		shown = max
+	}
+	w := cmd.ErrOrStderr()
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "dirty files (showing %d of %d):\n", shown, total)
+	for i := 0; i < shown; i++ {
+		fmt.Fprintf(w, "  %s\n", files[i])
+	}
+	if total > shown {
+		fmt.Fprintf(w, "  ... %d more\n", total-shown)
 	}
 }

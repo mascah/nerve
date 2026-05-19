@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mascah/nerve/internal/config"
 )
@@ -17,7 +18,20 @@ type cloneForm struct {
 	required bool
 	focus    int // 0=path, 1=kind, 2=required, 3=submit
 	status   string
+
+	// suggestions is the rolling autocomplete list shown below the path field
+	// while focus == 0. suggestionCursor highlights one entry that the user
+	// can accept with Tab or Enter (Enter does not submit while suggestions
+	// are visible — it only inserts the suggestion).
+	suggestions      []string
+	suggestionCursor int
+	// lastQuery caches the path-input value we last fed to listPathSuggestions
+	// so we only re-walk the filesystem when the user actually changed it.
+	lastQuery string
 }
+
+// maxPathSuggestions is the visible suggestion list size.
+const maxPathSuggestions = 8
 
 var kindOptions = []string{"auto", "file", "directory"}
 
@@ -33,7 +47,37 @@ func newCloneForm(repoRoot string) *cloneForm {
 
 func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 	if m, ok := msg.(tea.KeyMsg); ok {
-		switch m.String() {
+		key := m.String()
+		// Suggestion-list keys only activate while the path field has focus
+		// AND there are suggestions to act on. They take precedence over the
+		// generic form-navigation handlers below.
+		if f.focus == 0 && len(f.suggestions) > 0 {
+			switch key {
+			case "down":
+				if f.suggestionCursor < len(f.suggestions)-1 {
+					f.suggestionCursor++
+				}
+				return nil
+			case "up":
+				if f.suggestionCursor > 0 {
+					f.suggestionCursor--
+				}
+				return nil
+			case "tab", "enter":
+				// Accept the highlighted suggestion: replace input value,
+				// move caret to the end, and clear the suggestion list so
+				// subsequent Tab/Enter behave normally (next field / submit).
+				pick := f.suggestions[f.suggestionCursor]
+				f.pathIn.SetValue(pick)
+				f.pathIn.CursorEnd()
+				f.suggestions = nil
+				f.suggestionCursor = 0
+				f.lastQuery = pick
+				return nil
+			}
+		}
+
+		switch key {
 		case "esc":
 			return f.backToProject()
 		case "tab":
@@ -71,9 +115,26 @@ func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 	if f.focus == 0 {
 		var cmd tea.Cmd
 		f.pathIn, cmd = f.pathIn.Update(msg)
+		f.refreshSuggestions()
 		return cmd
 	}
 	return nil
+}
+
+// refreshSuggestions recomputes the autocomplete list from the current path
+// input value. It is cheap when the value hasn't changed (cached via
+// lastQuery) and bounded by listPathSuggestions's depth/scan ceilings when it
+// does change.
+func (f *cloneForm) refreshSuggestions() {
+	q := f.pathIn.Value()
+	if q == f.lastQuery {
+		return
+	}
+	f.lastQuery = q
+	f.suggestions = listPathSuggestions(f.repoRoot, q, maxPathSuggestions)
+	if f.suggestionCursor >= len(f.suggestions) {
+		f.suggestionCursor = 0
+	}
 }
 
 func (f *cloneForm) applyFocus() {
@@ -136,21 +197,43 @@ func (f *cloneForm) View() string {
 
 	b.WriteString(formLabel.Render("path (relative to repo)") + "\n")
 	b.WriteString(panelStyle.Render(f.pathIn.View()))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	// Suggestion list — only rendered while the path field has focus and we
+	// actually have matches. Up/down move the cursor; Tab/Enter accept.
+	if f.focus == 0 && len(f.suggestions) > 0 {
+		for i, sug := range f.suggestions {
+			if i == f.suggestionCursor {
+				b.WriteString(selectedRow.Render("▸ " + sug))
+			} else {
+				b.WriteString(muted.Render("  " + sug))
+			}
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n")
 
 	b.WriteString(formLabel.Render("kind") + "\n")
+	kindTabs := make([]string, 0, len(kindOptions))
 	for i, k := range kindOptions {
-		s := "  " + k + "  "
-		if i == f.kindIdx {
-			s = "[" + k + "]"
+		// Use the same plain label for every tab; styling (not bracketing)
+		// distinguishes the selected option and the focused strip. This keeps
+		// every tab the same width so the bottom border stays aligned.
+		var s string
+		switch {
+		case i == f.kindIdx && f.focus == 1:
+			s = tabKindActive.Render(k)
+		case i == f.kindIdx:
+			// Selected option, but focus is elsewhere — show it as active but
+			// without the reverse-video focus emphasis.
+			s = tabActive.Render(k)
+		case f.focus == 1:
+			s = tabInactive.Render(k)
+		default:
+			s = tabInactive.Render(k)
 		}
-		if f.focus == 1 {
-			s = tabActive.Render(s)
-		} else {
-			s = tabInactive.Render(s)
-		}
-		b.WriteString(s)
+		kindTabs = append(kindTabs, s)
 	}
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Bottom, kindTabs...))
 	b.WriteString("\n\n")
 
 	reqLabel := "[ ] required (fail nerve new if missing)"
@@ -176,6 +259,6 @@ func (f *cloneForm) View() string {
 		b.WriteString(statusErr.Render(f.status))
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("tab next  ←→ kind  space toggle required  ⏎ submit  esc cancel"))
+	b.WriteString(helpStyle.Render("tab next  ↑↓ suggestion  ⏎/tab accept  ←→ kind  space required  esc cancel"))
 	return b.String()
 }

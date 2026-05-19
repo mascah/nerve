@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mascah/nerve/internal/config"
 )
@@ -144,7 +145,7 @@ func (v *projectView) View() string {
 			tabs = append(tabs, tabInactive.Render(label))
 		}
 	}
-	b.WriteString(strings.Join(tabs, ""))
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Bottom, tabs...))
 	b.WriteString("\n\n")
 
 	switch v.tab {

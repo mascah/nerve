@@ -175,6 +175,16 @@ cat "$SANDBOX/demo/.worktrees/feat-second/.env.local"
 # DOCKER_HOST_DJANGO_PORT=8002, etc.
 ```
 
+### Cross-project port collisions
+
+Each project's `.nerve/ports.json` only knows about its own worktrees. To prevent two projects with overlapping port pools (e.g. project A at `base_port: 8000` and project B at `base_port: 8005`) from claiming the same TCP port, nerve also records every active per-service port in a user-wide leases file:
+
+```
+$XDG_CONFIG_HOME/nerve/ports.json     (default: ~/.config/nerve/ports.json)
+```
+
+This honors `XDG_CONFIG_HOME` the same way `projects.yaml` does. The allocator consults this file before picking an offset, and `nerve new` writes a lease for every per-service port it reserves. `nerve ports cleanup` (without `--project`) prunes orphan leases whose worktree no longer exists; `nerve doctor` flags them. You should never need to edit this file by hand.
+
 ---
 
 ## 5. Listing + inspection
@@ -206,6 +216,21 @@ From the main checkout, `nerve env` should be **silent** (no vars, exit 0):
 ```bash
 cd "$SANDBOX/demo"
 nerve env --json                   # → empty / no output
+```
+
+### Bootstrapping a new worktree (uv sync / pnpm i)
+
+Don't try to copy `.venv` or `node_modules` from the main checkout. Python venvs bake absolute paths into `bin/python` shebangs and `activate`; `pnpm` uses hard-links into a content-addressed store and gets confused when the link target moves; `npm`/`yarn` with native deps (sharp, esbuild, lmdb) ship per-path platform metadata. On a warm package-manager cache the install commands take seconds — copying is not meaningfully faster and is meaningfully more fragile.
+
+Instead, declare them as `post_create` hooks. They run **after** `clone_files` are copied and `templates` are rendered, so `.env` is on disk before install scripts read it:
+
+```yaml
+hooks:
+    post_create:
+        - "uv sync"
+        - "pnpm install"
+    pre_remove:
+        - "echo 'pre-remove ran' > /tmp/nerve-walkthrough-preremove.txt"
 ```
 
 ### Refresh after editing services
@@ -352,6 +377,9 @@ env | grep DOCKER_HOST_DJANGO_PORT
 The port should change — `CwdChanged` re-fires `nerve env --inject`.
 
 ### Uninstall
+
+`nerve hooks install` **merges** into the existing `.claude/settings.json` — any hooks you defined yourself stay put, and nerve's entries are tagged with the literal sentinel `# nerve-managed` so uninstall can find and remove only them. If you've registered your own `SessionStart` hook, nerve appends alongside it rather than replacing it.
+
 ```bash
 nerve hooks uninstall --project
 cat .claude/settings.json

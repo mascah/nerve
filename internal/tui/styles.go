@@ -50,6 +50,19 @@ var (
 			Border(lipgloss.Border{Bottom: " "}, false, false, true, false).
 			BorderForeground(colorDim)
 
+	// tabKindActive marks the currently-selected option inside a tab group
+	// (e.g. the chosen "kind" in the clone-file form). It is independent of
+	// keyboard focus — tabActive/tabInactive convey whether the user is
+	// currently navigating the tab strip. Using a styling change (bold +
+	// reverse) instead of width-varying brackets keeps the underline aligned.
+	tabKindActive = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent).
+			Reverse(true).
+			Padding(0, 2).
+			Border(lipgloss.Border{Bottom: "─"}, false, false, true, false).
+			BorderForeground(colorAccent)
+
 	formLabel = lipgloss.NewStyle().Foreground(colorMuted).Bold(true)
 	formInput = lipgloss.NewStyle().Foreground(colorFg)
 

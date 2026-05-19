@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/registry"
 )
 
@@ -86,6 +88,40 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			issues++
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ port registry consistent (%d allocations)\n", len(regSnap.Allocations))
+		}
+	}
+
+	// Cross-project leases: flag any entry whose worktree no longer exists on disk.
+	fmt.Fprintln(cmd.OutOrStdout(), "\n# leases")
+	store, err := leases.Open()
+	if err != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✗ open leases store: %v\n", err)
+		issues++
+	} else {
+		cur, err := store.Read()
+		if err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ✗ read leases: %v\n", err)
+			issues++
+		} else {
+			orphans := 0
+			for port, l := range cur {
+				if l.WorktreePath == "" {
+					continue
+				}
+				if _, statErr := os.Stat(l.WorktreePath); os.IsNotExist(statErr) {
+					if orphans == 0 {
+						fmt.Fprintln(cmd.OutOrStdout(), "  ! orphan leases (worktree path missing):")
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "    - port %d project=%s path=%s\n", port, l.Project, l.WorktreePath)
+					orphans++
+				}
+			}
+			if orphans > 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "    run `nerve ports cleanup` to prune")
+				issues++
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "  ✓ leases consistent (%d active)\n", len(cur))
+			}
 		}
 	}
 

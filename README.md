@@ -1,6 +1,6 @@
 # nerve
 
-Worktree manager with Claude Code integration. Replaces hand-rolled worktree scripts and integrates with Claude Code's `WorktreeCreate` / `WorktreeRemove` hooks.
+Worktree manager with Claude Code integration. Replaces hand-rolled worktree scripts and integrates with Claude Code's `WorktreeCreate` / `WorktreeRemove` hooks. Per-project `hooks.post_create` commands run after clone files and templates are in place — use them for `uv sync`, `pnpm install`, `bundle install`, and similar bootstrap steps rather than copying `.venv` / `node_modules` between worktrees.
 
 ## Install
 
@@ -68,6 +68,10 @@ nerve hooks install --project
 | `SessionStart` + `CwdChanged` | `nerve env --inject` | Appends per-worktree port env vars to `$CLAUDE_ENV_FILE` so Bash tool calls see them |
 
 After install, `claude --worktree feat-foo` from a nerve-registered repo will create the worktree at `<repo>/.worktrees/feat-foo/` (instead of Claude's default `<repo>/.claude/worktrees/`), with ports allocated and env vars wired up for the session.
+
+### Merge semantics for `nerve hooks install`
+
+`nerve hooks install` merges into an existing `.claude/settings.json` — it never overwrites it. Each nerve-managed command string is tagged with the literal sentinel `# nerve-managed`, and `nerve hooks uninstall` removes only entries carrying that sentinel. Re-running install is idempotent: nerve strips its old sentinel entries first, then re-appends the current set. When you've defined your own hook for an event nerve also uses (e.g. `SessionStart`), both coexist — nerve appends alongside, it doesn't replace.
 
 ## Releasing
 
