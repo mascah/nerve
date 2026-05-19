@@ -338,15 +338,17 @@ cat "$XDG_CONFIG_HOME/nerve/projects.yaml"
 cd "$SANDBOX/demo"
 nerve hooks install --project --dry-run     # preview the merged JSON
 nerve hooks install --project               # actually write
-cat .claude/settings.json                   # verify
+cat .claude/settings.local.json             # verify
 ```
 
-You should see 4 nerve entries: `WorktreeCreate`, `WorktreeRemove`, `SessionStart`, `CwdChanged`, each tagged with `# nerve-managed`.
+By default `--project` targets `.claude/settings.local.json` — the user-local override file, not the committed `.claude/settings.json` — so nerve hooks don't get shared with collaborators who may not have nerve installed. Nerve also adds `.claude/settings.local.json` to the repo's `.gitignore` on first install.
+
+You should see 4 nerve entries: `WorktreeCreate`, `WorktreeRemove`, `SessionStart`, `CwdChanged`, each tagged with `# nerve-managed`. Use `--shared` to write to `.claude/settings.json` instead (only if every collaborator has nerve).
 
 ### Re-install is idempotent
 ```bash
 nerve hooks install --project
-diff <(nerve hooks install --project --dry-run) .claude/settings.json
+diff <(nerve hooks install --project --dry-run) .claude/settings.local.json
 # → no diff after the first install
 ```
 
@@ -378,11 +380,12 @@ The port should change — `CwdChanged` re-fires `nerve env --inject`.
 
 ### Uninstall
 
-`nerve hooks install` **merges** into the existing `.claude/settings.json` — any hooks you defined yourself stay put, and nerve's entries are tagged with the literal sentinel `# nerve-managed` so uninstall can find and remove only them. If you've registered your own `SessionStart` hook, nerve appends alongside it rather than replacing it.
+`nerve hooks install` **merges** into the target settings file — any hooks you defined yourself stay put, and nerve's entries are tagged with the literal sentinel `# nerve-managed` so uninstall can find and remove only them. If you've registered your own `SessionStart` hook, nerve appends alongside it rather than replacing it.
 
 ```bash
-nerve hooks uninstall --project
-cat .claude/settings.json
+nerve hooks uninstall --project              # default target: settings.local.json
+cat .claude/settings.local.json
+# nerve hooks uninstall --shared             # if you ever installed with --shared
 ```
 Only nerve-tagged entries should be gone; any other hooks in the file are preserved.
 
@@ -427,6 +430,7 @@ unset XDG_CONFIG_HOME
 - **`nerve new` fails with "port pool exhausted"** → `nerve ports cleanup` to drop stale allocations.
 - **`nerve env --inject` is silent** → either cwd isn't in a registered project, project is lightweight, or the worktree isn't in `.nerve/ports.json`. Run `nerve env --json` to see whether anything is computed.
 - **`claude --worktree` lands in `.claude/worktrees/...` instead of `.worktrees/...`** → hooks aren't installed (or aren't installed in the right scope). Run `nerve hooks install --project` from the repo root.
+- **Env vars don't appear inside a Claude session running in a worktree** → make sure the worktree has its own `.claude/settings.local.json` (nerve auto-copies it on create; if you created a worktree before installing nerve hooks, manually copy it from the main checkout or recreate the worktree).
 - **`nerve doctor` reports stale allocations** → run `nerve ports cleanup --project <name>`.
 
 ## Re-running the automated smoke test

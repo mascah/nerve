@@ -69,13 +69,20 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	}
 
 	// Always make sure .worktrees/ is gitignored when we're placing worktrees inside
-	// the repo (the default). Also gitignore .nerve/ports.json + lock if a config is present.
+	// the repo (the default). Also gitignore .nerve/ports.json + lock if a config is
+	// present, and .env.local (always written by nerve on create — leaving it
+	// tracked would make every nerve-managed worktree permanently "dirty" from
+	// git's perspective and block the WorktreeRemove hook's dirty check).
 	gitignoreEntries := []string{}
 	if isInsideRepo(opts.RepoRoot, worktreePath) {
 		gitignoreEntries = append(gitignoreEntries, ".worktrees/")
 	}
 	if opts.Cfg != nil {
-		gitignoreEntries = append(gitignoreEntries, ".nerve/ports.json", ".nerve/*.lock")
+		gitignoreEntries = append(gitignoreEntries,
+			".nerve/ports.json",
+			".nerve/*.lock",
+			".env.local",
+		)
 	}
 	added, err := EnsureGitignore(opts.RepoRoot, gitignoreEntries)
 	if err != nil {

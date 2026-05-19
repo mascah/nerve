@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -74,6 +75,19 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 	if res.BranchDeleted {
 		fmt.Fprintf(out, "  deleted branch %s\n", branch)
+	}
+
+	// If the user ran `nerve remove` from inside the worktree they just removed,
+	// their shell is now sitting in a deleted directory. Subsequent commands
+	// (pyenv hooks, prompt setup, even `cd`) will spew getcwd errors until they
+	// move out. We can't change the parent shell's cwd from here, so just print
+	// a recovery hint and a copy-pasteable cd target.
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		if canon, err := gitutil.CanonicalPath(cwd); err == nil {
+			if canon == wtPath || strings.HasPrefix(canon, wtPath+string(filepath.Separator)) {
+				fmt.Fprintf(out, "\ntip: your shell is still inside the deleted worktree — run `cd %s` to recover\n", repoRoot)
+			}
+		}
 	}
 	return nil
 }
