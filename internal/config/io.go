@@ -76,14 +76,31 @@ func SaveProjectConfig(repoRoot string, cfg *ProjectConfig) error {
 // GlobalRegistryPath returns the path to the user-wide projects registry.
 // Honors $XDG_CONFIG_HOME if set, else ~/.config/nerve/projects.yaml.
 func GlobalRegistryPath() (string, error) {
+	return globalConfigPath("projects.yaml")
+}
+
+// LeasesPath returns the path to the user-wide port-leases store. Sibling of
+// GlobalRegistryPath; same XDG rules. Used by internal/leases to track active
+// per-port leases across ALL nerve projects so two projects with overlapping
+// port pools can't double-allocate the same TCP port.
+func LeasesPath() (string, error) {
+	return globalConfigPath("ports.json")
+}
+
+// LeasesLockPath returns the flock companion to LeasesPath.
+func LeasesLockPath() (string, error) {
+	return globalConfigPath("ports.json.lock")
+}
+
+func globalConfigPath(filename string) (string, error) {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "nerve", "projects.yaml"), nil
+		return filepath.Join(xdg, "nerve", filename), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "nerve", "projects.yaml"), nil
+	return filepath.Join(home, ".config", "nerve", filename), nil
 }
 
 // LoadGlobalRegistry reads the user-wide projects registry. If the file does not

@@ -42,7 +42,11 @@ func newProjectCmd() *cobra.Command {
 
 func runProjectAdd(cmd *cobra.Command, args []string) error {
 	rawPath := args[0]
-	abs, err := filepath.Abs(rawPath)
+	expanded, err := gitutil.ExpandPath(rawPath)
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(expanded)
 	if err != nil {
 		return err
 	}

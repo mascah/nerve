@@ -29,6 +29,17 @@ var ErrNoServices = errors.New("project has no services configured")
 // Pluggable to keep tests hermetic; production code uses ProbeBind.
 type ProbeFunc func(port int) bool
 
+// LeaseChecker is a read-only view of the cross-project leases store. The
+// allocator calls IsLeased(port) for every service's candidate port and skips
+// the offset if any port is leased to a different worktree. A nil LeaseChecker
+// disables cross-project lease checking (the per-project registry and the bind
+// probe still apply). The authoritative race-safe gate is the leases store
+// Reserve call under the worktree create flow; this pre-check just avoids
+// wasted offsets.
+type LeaseChecker interface {
+	IsLeased(port int) (taken bool, owner string)
+}
+
 // Result describes a successful allocation.
 type Result struct {
 	Offset int
@@ -42,8 +53,9 @@ type Result struct {
 // to ensure no external squatter, and records the allocation in reg. The caller must
 // have reg under exclusive lock (via registry.Handle.With).
 //
-// probe may be nil; in that case ProbeBind is used.
-func Allocate(reg *registry.Registry, cfg *config.ProjectConfig, worktreePath, branch string, probe ProbeFunc) (*Result, error) {
+// probe may be nil; in that case ProbeBind is used. checker may be nil; in that
+// case cross-project lease checking is skipped.
+func Allocate(reg *registry.Registry, cfg *config.ProjectConfig, worktreePath, branch string, probe ProbeFunc, checker LeaseChecker) (*Result, error) {
 	primary := cfg.PrimaryService()
 	if primary == nil {
 		return nil, ErrNoServices
@@ -69,6 +81,12 @@ func Allocate(reg *registry.Registry, cfg *config.ProjectConfig, worktreePath, b
 			if !probe(candidate) {
 				allFree = false
 				break
+			}
+			if checker != nil {
+				if leased, _ := checker.IsLeased(candidate); leased {
+					allFree = false
+					break
+				}
 			}
 			portByService[svc.ID] = candidate
 		}

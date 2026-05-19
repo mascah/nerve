@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mascah/nerve/internal/config"
+	"github.com/mascah/nerve/internal/gitutil"
 	"github.com/mascah/nerve/internal/worktree"
 )
 
@@ -97,34 +98,59 @@ type removeHookInput struct {
 
 func runWorktreeRemove(cmd *cobra.Command, _ []string) error {
 	in := removeHookInput{}
-	if fromHook, _ := cmd.Flags().GetBool("from-hook"); fromHook {
+	fromHook, _ := cmd.Flags().GetBool("from-hook")
+	if fromHook {
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
 	}
-	if in.Path == "" {
-		var err error
-		in.Path, err = os.Getwd()
+
+	wtPath := in.Path
+	if wtPath == "" {
+		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
+		wtPath = cwd
 	}
-	repoRoot, wtPath, branch, projEntry, err := resolveRemoveTarget(nil)
+	if canon, err := gitutil.CanonicalPath(wtPath); err == nil {
+		wtPath = canon
+	}
+
+	info, err := gitutil.Discover(wtPath)
 	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "nerve worktree-remove: discover:", err)
 		return err
 	}
-	if in.Path != "" && in.Path != wtPath {
-		wtPath = in.Path
+
+	var branch string
+	worktrees, _ := gitutil.ListWorktrees(info.MainCheckout)
+	for _, w := range worktrees {
+		if canon, err := gitutil.CanonicalPath(w.Path); err == nil && canon == wtPath {
+			branch = w.Branch
+			break
+		}
 	}
+
+	entry, _, _ := resolveProjectByCwd(info.MainCheckout)
+	projectPath := info.MainCheckout
 	var cfg *config.ProjectConfig
-	if projEntry != nil {
-		cfg, _ = loadProjectConfigOrLightweight(projEntry.Path)
+	if entry != nil {
+		projectPath = entry.Path
+		cfg, _ = loadProjectConfigOrLightweight(entry.Path)
+	} else {
+		cfg, _ = loadProjectConfigOrLightweight(info.MainCheckout)
 	}
+
 	_, err = worktree.Remove(worktree.RemoveOptions{
-		RepoRoot:     repoRoot,
+		RepoRoot:     projectPath,
 		WorktreePath: wtPath,
 		Branch:       branch,
 		Cfg:          cfg,
-		Force:        false,
-		Log:          cmd.ErrOrStderr(),
+		// fromHook implies the user clicked "remove" in Claude Code's exit
+		// dialog — they explicitly consented. Untracked .env.local /
+		// .claude/settings.local.json would otherwise trip the dirty check
+		// and silently leak the worktree.
+		Force: fromHook,
+		Log:   cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "nerve worktree-remove:", err)

@@ -1,6 +1,6 @@
 # nerve
 
-Worktree manager with Claude Code integration. Replaces hand-rolled worktree scripts and integrates with Claude Code's `WorktreeCreate` / `WorktreeRemove` hooks.
+Worktree manager with Claude Code integration. Replaces hand-rolled worktree scripts and integrates with Claude Code's `WorktreeCreate` / `WorktreeRemove` hooks. Per-project `hooks.post_create` commands run after clone files and templates are in place — use them for `uv sync`, `pnpm install`, `bundle install`, and similar bootstrap steps rather than copying `.venv` / `node_modules` between worktrees.
 
 ## Install
 
@@ -59,7 +59,7 @@ nerve hooks install --project
 
 ## Claude Code integration
 
-`nerve hooks install --project` writes the following into `<repo>/.claude/settings.json`:
+`nerve hooks install --project` writes the following into `<repo>/.claude/settings.local.json` (the per-user override file — see [Install scope](#install-scope-which-settings-file) below):
 
 | Hook event | Command | Purpose |
 |---|---|---|
@@ -68,6 +68,22 @@ nerve hooks install --project
 | `SessionStart` + `CwdChanged` | `nerve env --inject` | Appends per-worktree port env vars to `$CLAUDE_ENV_FILE` so Bash tool calls see them |
 
 After install, `claude --worktree feat-foo` from a nerve-registered repo will create the worktree at `<repo>/.worktrees/feat-foo/` (instead of Claude's default `<repo>/.claude/worktrees/`), with ports allocated and env vars wired up for the session.
+
+### Install scope: which settings file
+
+`.claude/settings.json` is the shared, team-committed Claude Code settings file. `.claude/settings.local.json` is the per-user override that Claude Code treats as gitignored. Because not everyone on your team will have nerve installed, by default `nerve hooks install --project` targets the **local** file so the hooks don't get committed:
+
+| Flag | Target |
+|---|---|
+| `--project` (default) | `<repo>/.claude/settings.local.json` (user-local, gitignored — nerve also adds it to `.gitignore` on first install) |
+| `--shared` | `<repo>/.claude/settings.json` (committed; use only if every collaborator has nerve) |
+| `--user` | `~/.claude/settings.json` (every repo on your machine) |
+
+When nerve creates a new worktree it auto-copies both `settings.json` and `settings.local.json` from the main checkout into the worktree's `.claude/`, so the hooks fire there too.
+
+### Merge semantics for `nerve hooks install`
+
+`nerve hooks install` merges into the target settings file — it never overwrites it. Each nerve-managed command string is tagged with the literal sentinel `# nerve-managed`, and `nerve hooks uninstall` removes only entries carrying that sentinel. Re-running install is idempotent: nerve strips its old sentinel entries first, then re-appends the current set. When you've defined your own hook for an event nerve also uses (e.g. `SessionStart`), both coexist — nerve appends alongside, it doesn't replace.
 
 ## Releasing
 

@@ -89,7 +89,12 @@ func (v *addProjectView) submit() tea.Cmd {
 		v.status = "path is required"
 		return nil
 	}
-	abs, err := filepath.Abs(path)
+	expanded, err := gitutil.ExpandPath(path)
+	if err != nil {
+		v.status = "expand path: " + err.Error()
+		return nil
+	}
+	abs, err := filepath.Abs(expanded)
 	if err != nil {
 		v.status = "bad path: " + err.Error()
 		return nil

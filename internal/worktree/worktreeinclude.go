@@ -60,6 +60,42 @@ func copyWorktreeInclude(repoRoot, worktreePath string, log io.Writer) error {
 	return s.Err()
 }
 
+// copyClaudeSettings replicates <repoRoot>/.claude/settings.json (and the
+// per-user override file settings.local.json, when present) into the new
+// worktree. This is required for the Claude Code hooks integration: a linked
+// worktree is treated by Claude Code as its own project root, so hooks
+// installed only at the main checkout's .claude/settings.json are invisible
+// inside the worktree. Best-effort — missing source files are not errors, and
+// any IO failure is reported to the log without aborting the worktree create.
+func copyClaudeSettings(repoRoot, worktreePath string, log io.Writer) error {
+	srcDir := filepath.Join(repoRoot, ".claude")
+	if _, err := os.Stat(srcDir); err != nil {
+		return nil
+	}
+	dstDir := filepath.Join(worktreePath, ".claude")
+	for _, name := range []string{"settings.json", "settings.local.json"} {
+		src := filepath.Join(srcDir, name)
+		info, err := os.Stat(src)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+			return err
+		}
+		dst := filepath.Join(dstDir, name)
+		if err := copyFileSimple(src, dst, info.Mode()); err != nil {
+			return err
+		}
+		if log != nil {
+			fmt.Fprintf(log, "  copied .claude/%s\n", name)
+		}
+	}
+	return nil
+}
+
 func copyFileSimple(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {

@@ -155,11 +155,39 @@ func BranchExists(repoDir, branch string) (bool, error) {
 
 // IsDirty reports whether the worktree at path has uncommitted changes or untracked files.
 func IsDirty(path string) (bool, error) {
-	out, err := runGit(path, "status", "--porcelain")
+	files, err := DirtyFiles(path)
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(out) != "", nil
+	return len(files) > 0, nil
+}
+
+// DirtyFiles returns the list of files reported by `git status --porcelain` for the
+// worktree at path, in the order git emits them. Each porcelain line has the form
+// "XY filename" (status codes in cols 1-2, space in col 3, path starting at col 4).
+// Renames take the form "R  old -> new" (and similarly "C  old -> new" for copies);
+// for those entries the new path is returned. An empty slice is returned for a clean
+// worktree.
+func DirtyFiles(path string) ([]string, error) {
+	out, err := runGit(path, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			// Empty trailing line from Split, or malformed entry — skip.
+			continue
+		}
+		// Porcelain v1: cols 0-1 are status codes, col 2 is a space, path starts at col 3.
+		name := line[3:]
+		// Renames/copies: "old -> new". Take the destination.
+		if idx := strings.Index(name, " -> "); idx >= 0 {
+			name = name[idx+len(" -> "):]
+		}
+		files = append(files, name)
+	}
+	return files, nil
 }
 
 // HasUnpushedCommits reports whether the current branch in path has commits not yet

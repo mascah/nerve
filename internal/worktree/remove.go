@@ -7,6 +7,7 @@ import (
 
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/registry"
 )
 
@@ -15,6 +16,19 @@ var (
 	ErrDirty    = errors.New("worktree has uncommitted changes or untracked files")
 	ErrUnpushed = errors.New("worktree has unpushed commits")
 )
+
+// DirtyError is returned by Remove when the worktree has uncommitted changes or
+// untracked files and Force was not set. It carries the list of dirty files so the
+// CLI can show the user what they would lose. errors.Is(err, ErrDirty) returns true
+// for a *DirtyError, so existing callers that only check ErrDirty still work.
+type DirtyError struct {
+	Files []string
+}
+
+func (e *DirtyError) Error() string { return ErrDirty.Error() }
+
+// Unwrap lets errors.Is(err, ErrDirty) match a *DirtyError.
+func (e *DirtyError) Unwrap() error { return ErrDirty }
 
 // RemoveOptions feeds Remove.
 type RemoveOptions struct {
@@ -43,12 +57,12 @@ func Remove(opts RemoveOptions) (*RemoveResult, error) {
 	log := discardIfNil(opts.Log)
 
 	if !opts.Force {
-		dirty, err := gitutil.IsDirty(opts.WorktreePath)
+		dirtyFiles, err := gitutil.DirtyFiles(opts.WorktreePath)
 		if err != nil {
 			return nil, fmt.Errorf("check dirty: %w", err)
 		}
-		if dirty {
-			return nil, ErrDirty
+		if len(dirtyFiles) > 0 {
+			return nil, &DirtyError{Files: dirtyFiles}
 		}
 		unpushed, err := gitutil.HasUnpushedCommits(opts.WorktreePath)
 		if err != nil {
@@ -73,9 +87,14 @@ func Remove(opts RemoveOptions) (*RemoveResult, error) {
 	// we have the registry open so we can decide on branch deletion later.
 	createdByNerve := false
 	handle := registry.Open(opts.RepoRoot)
+	target, _ := gitutil.CanonicalPath(opts.WorktreePath)
 	err := handle.With(func(reg *registry.Registry) error {
 		for port, a := range reg.Allocations {
-			if a.WorktreePath == opts.WorktreePath {
+			stored, err := gitutil.CanonicalPath(a.WorktreePath)
+			if err != nil {
+				continue
+			}
+			if stored == target {
 				createdByNerve = a.CreatedByNerve
 				res.ReleasedPort = port
 				delete(reg.Allocations, port)
@@ -86,6 +105,17 @@ func Remove(opts RemoveOptions) (*RemoveResult, error) {
 	})
 	if err != nil {
 		return res, fmt.Errorf("release port: %w", err)
+	}
+
+	// Release any global cross-project leases held by this worktree. Best-effort:
+	// failures are logged but do not block worktree removal — we want `nerve
+	// remove` to be as forgiving as possible.
+	if leasesStore, err := leases.Open(); err != nil {
+		fmt.Fprintf(log, "warning: open leases store failed: %v\n", err)
+	} else if released, err := leasesStore.Release(opts.WorktreePath); err != nil {
+		fmt.Fprintf(log, "warning: release leases failed: %v\n", err)
+	} else if len(released) > 0 {
+		fmt.Fprintf(log, "released %d global port lease(s)\n", len(released))
 	}
 
 	// Remove the git worktree.

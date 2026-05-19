@@ -70,17 +70,27 @@ func (h *Handle) With(fn func(*Registry) error) error {
 
 // FindByWorktreePath looks up an allocation by absolute worktree path. Returns the
 // port (registry key) and the allocation. Returns ("", false) if not found.
+//
+// Both the lookup path and each stored allocation path are canonicalized
+// (symlink-resolved) before comparison so callers can pass either the
+// symlink-resolved or unresolved form. This matters on macOS where /tmp is a
+// symlink to /private/tmp and `git rev-parse --show-toplevel` returns the
+// resolved form while older registry entries may not be.
 func (h *Handle) FindByWorktreePath(path string) (string, Allocation, bool, error) {
 	reg, err := h.Read()
 	if err != nil {
 		return "", Allocation{}, false, err
 	}
-	abs, err := filepath.Abs(path)
+	target, err := gitutil.CanonicalPath(path)
 	if err != nil {
 		return "", Allocation{}, false, err
 	}
 	for port, a := range reg.Allocations {
-		if a.WorktreePath == abs {
+		stored, err := gitutil.CanonicalPath(a.WorktreePath)
+		if err != nil {
+			continue
+		}
+		if stored == target {
 			return port, a, true, nil
 		}
 	}
@@ -141,14 +151,18 @@ func CleanStale(reg *Registry, repoRoot string) (int, error) {
 	}
 	alive := make(map[string]bool, len(worktrees))
 	for _, wt := range worktrees {
-		abs, err := filepath.Abs(wt.Path)
+		canon, err := gitutil.CanonicalPath(wt.Path)
 		if err == nil {
-			alive[abs] = true
+			alive[canon] = true
 		}
 	}
 	dropped := 0
 	for port, a := range reg.Allocations {
-		if !alive[a.WorktreePath] {
+		canon, err := gitutil.CanonicalPath(a.WorktreePath)
+		if err != nil {
+			canon = a.WorktreePath
+		}
+		if !alive[canon] {
 			delete(reg.Allocations, port)
 			dropped++
 		}
@@ -181,13 +195,20 @@ func (r *Registry) Claim(port int, a Allocation) error {
 
 // ReleaseByWorktreePath drops the allocation associated with worktreePath. Returns the
 // dropped port (registry key) and true, or "" and false if not found.
+//
+// Comparison is canonical (symlink-resolved) on both sides so the call works
+// whether the registry holds the resolved form or not.
 func (r *Registry) ReleaseByWorktreePath(worktreePath string) (string, bool) {
-	abs, err := filepath.Abs(worktreePath)
+	target, err := gitutil.CanonicalPath(worktreePath)
 	if err != nil {
 		return "", false
 	}
 	for port, a := range r.Allocations {
-		if a.WorktreePath == abs {
+		stored, err := gitutil.CanonicalPath(a.WorktreePath)
+		if err != nil {
+			continue
+		}
+		if stored == target {
 			delete(r.Allocations, port)
 			return port, true
 		}

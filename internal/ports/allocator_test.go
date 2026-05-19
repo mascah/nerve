@@ -27,7 +27,7 @@ func TestAllocateAssignsFirstFreeOffset(t *testing.T) {
 	cfg := testConfig()
 	reg := freshRegistry()
 	probe := func(int) bool { return true }
-	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe)
+	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestAllocateSkipsTakenOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := func(int) bool { return true }
-	res, err := Allocate(reg, cfg, "/tmp/wt2", "feat2", probe)
+	res, err := Allocate(reg, cfg, "/tmp/wt2", "feat2", probe, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestAllocateSkipsBoundPorts(t *testing.T) {
 	probe := func(port int) bool {
 		return !(port == 5433)
 	}
-	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe)
+	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestAllocateExhausted(t *testing.T) {
 		}
 	}
 	probe := func(int) bool { return true }
-	_, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe)
+	_, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe, nil)
 	if err != ErrPoolExhausted {
 		t.Errorf("expected ErrPoolExhausted, got %v", err)
 	}
@@ -95,9 +95,29 @@ func TestAllocateExhausted(t *testing.T) {
 func TestAllocateNoServices(t *testing.T) {
 	cfg := config.Defaults()
 	reg := freshRegistry()
-	_, err := Allocate(reg, &cfg, "/tmp/wt", "feat", func(int) bool { return true })
+	_, err := Allocate(reg, &cfg, "/tmp/wt", "feat", func(int) bool { return true }, nil)
 	if err != ErrNoServices {
 		t.Errorf("expected ErrNoServices, got %v", err)
+	}
+}
+
+// fakeChecker reports a fixed set of ports as leased.
+type fakeChecker map[int]bool
+
+func (f fakeChecker) IsLeased(port int) (bool, string) { return f[port], "other" }
+
+func TestAllocateSkipsLeasedPorts(t *testing.T) {
+	cfg := testConfig()
+	reg := freshRegistry()
+	// Bind probe says everything is free; only the leases store says 5433 is taken.
+	probe := func(int) bool { return true }
+	checker := fakeChecker{5433: true}
+	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe, checker)
+	if err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if res.Offset != 2 {
+		t.Errorf("expected offset 2 (offset 1's postgres=5433 leased to another project), got %d", res.Offset)
 	}
 }
 

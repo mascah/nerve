@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mascah/nerve/internal/config"
+	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/registry"
 )
 
@@ -88,6 +90,9 @@ func runPortsCleanup(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	totalDropped := 0
+	// Per-project: clean stale local allocations AND collect every active
+	// worktree path so we can prune the global leases store after.
+	var allActive []string
 	for _, p := range projs {
 		handle := registry.Open(p.Path)
 		err := handle.With(func(reg *registry.Registry) error {
@@ -104,7 +109,32 @@ func runPortsCleanup(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", p.Name, err)
 		}
+		wts, err := gitutil.ListWorktrees(p.Path)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: list worktrees: %v\n", p.Name, err)
+			continue
+		}
+		for _, w := range wts {
+			allActive = append(allActive, w.Path)
+		}
 	}
+
+	// Prune the global cross-project leases store. We only prune when the user
+	// asked for a cleanup across ALL projects (no --project filter), because
+	// otherwise we'd drop entries that belong to projects the user didn't ask
+	// about and that are still legitimately alive.
+	if filter == "" {
+		store, err := leases.Open()
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "leases: open: %v\n", err)
+		} else if dropped, err := store.Prune(allActive); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "leases: prune: %v\n", err)
+		} else if len(dropped) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "leases: dropped %d orphan(s)\n", len(dropped))
+			totalDropped += len(dropped)
+		}
+	}
+
 	fmt.Fprintf(cmd.OutOrStdout(), "cleanup complete (%d total)\n", totalDropped)
 	return nil
 }

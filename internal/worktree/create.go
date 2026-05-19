@@ -15,6 +15,7 @@ import (
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/envfile"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/ports"
 	"github.com/mascah/nerve/internal/registry"
 )
@@ -68,13 +69,20 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	}
 
 	// Always make sure .worktrees/ is gitignored when we're placing worktrees inside
-	// the repo (the default). Also gitignore .nerve/ports.json + lock if a config is present.
+	// the repo (the default). Also gitignore .nerve/ports.json + lock if a config is
+	// present, and .env.local (always written by nerve on create — leaving it
+	// tracked would make every nerve-managed worktree permanently "dirty" from
+	// git's perspective and block the WorktreeRemove hook's dirty check).
 	gitignoreEntries := []string{}
 	if isInsideRepo(opts.RepoRoot, worktreePath) {
 		gitignoreEntries = append(gitignoreEntries, ".worktrees/")
 	}
 	if opts.Cfg != nil {
-		gitignoreEntries = append(gitignoreEntries, ".nerve/ports.json", ".nerve/*.lock")
+		gitignoreEntries = append(gitignoreEntries,
+			".nerve/ports.json",
+			".nerve/*.lock",
+			".env.local",
+		)
 	}
 	added, err := EnsureGitignore(opts.RepoRoot, gitignoreEntries)
 	if err != nil {
@@ -85,6 +93,21 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	fmt.Fprintf(log, "git worktree add %s -b %s\n", worktreePath, opts.Branch)
 	if err := gitutil.AddWorktree(opts.RepoRoot, worktreePath, opts.Branch, opts.BaseRef); err != nil {
 		return nil, fmt.Errorf("git worktree add: %w", err)
+	}
+
+	// Canonicalize so registry entries match what `git rev-parse --show-toplevel`
+	// returns later when `nerve env --inject` looks the path up. EvalSymlinks
+	// requires the path to exist, so this must come after `git worktree add`.
+	if canon, err := gitutil.CanonicalPath(worktreePath); err == nil {
+		worktreePath = canon
+	}
+
+	// Replicate .claude/settings.json so the SessionStart / CwdChanged hooks
+	// installed against the main checkout are visible inside the linked worktree.
+	// Best-effort: non-fatal so we don't break worktree create for users without
+	// Claude Code configured.
+	if err := copyClaudeSettings(opts.RepoRoot, worktreePath, log); err != nil {
+		fmt.Fprintf(log, "warning: copy .claude settings: %v\n", err)
 	}
 
 	res := &CreateResult{
@@ -107,7 +130,25 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	// Configured path: allocate ports, clone files, render templates, write env, run hooks.
 	cfg := opts.Cfg
 	handle := registry.Open(opts.RepoRoot)
+
+	// Snapshot the cross-project leases store once for the allocator's pre-check.
+	// The leases Reserve call below is the authoritative gate; this pre-check just
+	// helps the allocator skip offsets it would otherwise have to undo. Failures
+	// here are non-fatal — fall back to nil (no cross-project check) and let
+	// Reserve catch any collision.
+	leasesStore, leasesOpenErr := leases.Open()
+	var checker ports.LeaseChecker
+	if leasesOpenErr == nil {
+		c, err := leases.NewChecker(leasesStore, worktreePath)
+		if err == nil {
+			checker = c
+		}
+	}
+
 	var allocation *ports.Result
+	// Lock order: per-project registry FIRST, then the global leases store
+	// (acquired inside Reserve below). Reversing this can deadlock concurrent
+	// `nerve new` invocations across projects.
 	err = handle.With(func(reg *registry.Registry) error {
 		if reg.Project == "" {
 			reg.Project = projectName
@@ -116,7 +157,7 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		if _, err := registry.CleanStale(reg, opts.RepoRoot); err != nil {
 			return err
 		}
-		alloc, err := ports.Allocate(reg, cfg, worktreePath, opts.Branch, nil)
+		alloc, err := ports.Allocate(reg, cfg, worktreePath, opts.Branch, nil, checker)
 		if err != nil {
 			return err
 		}
@@ -127,6 +168,27 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		// Roll back the git worktree we just created so we don't leak it.
 		_ = gitutil.RemoveWorktree(opts.RepoRoot, worktreePath, true)
 		return nil, fmt.Errorf("port allocation: %w", err)
+	}
+
+	// Reserve the per-service ports in the global leases store. If this fails
+	// (another project beat us to it between snapshot and now), roll back BOTH
+	// the local registry claim and the git worktree so we don't leak state.
+	if leasesStore != nil {
+		lease := leases.Lease{
+			Project:      projectName,
+			ProjectPath:  opts.RepoRoot,
+			WorktreePath: worktreePath,
+			Branch:       opts.Branch,
+		}
+		if reserveErr := leasesStore.Reserve(allocation.PortByService, lease); reserveErr != nil {
+			// Roll back local registry claim.
+			_ = handle.With(func(reg *registry.Registry) error {
+				reg.ReleaseByWorktreePath(worktreePath)
+				return nil
+			})
+			_ = gitutil.RemoveWorktree(opts.RepoRoot, worktreePath, true)
+			return nil, fmt.Errorf("port lease: %w", reserveErr)
+		}
 	}
 	res.Offset = allocation.Offset
 	res.PrimaryPort = allocation.PrimaryPort

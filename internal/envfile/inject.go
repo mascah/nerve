@@ -6,16 +6,18 @@ import (
 	"os"
 )
 
-// AppendToClaudeEnv appends KEY=VALUE lines from vars to the file at $CLAUDE_ENV_FILE.
-// Returns false (no error) when $CLAUDE_ENV_FILE is unset — callers should fall back
-// to printing to stdout or doing nothing, depending on context. Returns true after a
-// successful append.
+// AppendToClaudeEnv appends `export KEY=VALUE` lines from vars to the file at
+// $CLAUDE_ENV_FILE. Claude Code sources that file as a shell preamble for subsequent
+// Bash tool calls — per the hooks docs, the file must contain `export` statements,
+// not bare dotenv assignments, otherwise the vars stay local to the sourcing shell
+// and don't reach child processes. Returns false (no error) when $CLAUDE_ENV_FILE
+// is unset; returns true after a successful append.
 func AppendToClaudeEnv(vars map[string]string) (bool, error) {
 	path := os.Getenv("CLAUDE_ENV_FILE")
 	if path == "" {
 		return false, nil
 	}
-	body := Render(vars)
+	body := RenderShell(vars)
 	if body == "" {
 		return true, nil
 	}
