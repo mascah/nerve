@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `nerve` is a Go CLI that manages git worktrees for projects with multiple network-bound services (Django, Postgres, Vite, etc.) and integrates with Claude Code's `WorktreeCreate` / `WorktreeRemove` / `SessionStart` / `CwdChanged` hooks. Its job is to make `claude --worktree <branch>` Just Work: create the worktree under `<repo>/.worktrees/<branch>/`, allocate non-conflicting ports for every service, copy untracked dotfiles (`.env`, `.npmrc`), and inject port env vars into the Claude Code session.
 
-It is single-binary, single-user, Go-only (no cgo). Module path: `github.com/mascah/nerve`. Requires Go 1.22+ per the README, though `go.mod` currently pins 1.26.3.
+It is single-binary, single-user, Go-only (no cgo). Module path: `github.com/mascah/nerve`. Requires Go 1.22+ per the README, though `go.mod` currently pins 1.26.2.
 
 ## Commands
 
