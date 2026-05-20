@@ -44,7 +44,7 @@ Release: `goreleaser release --clean` (darwin arm64+amd64; the Homebrew tap stan
 
 ### Two layers of config
 
-- **`<repo>/.nerve/config.yaml`** (per-project, committed) — declares `services` (id, base_port, env_key, primary), `clone_files`, `templates`, lifecycle `hooks.post_create` / `pre_remove`, and `project.{port_offset, worktree_root, pool_size}`. A project with no `config.yaml` is "lightweight" — `nerve new` still works but only does a plain `git worktree add`.
+- **`<repo>/.nerve/config.yaml`** (per-project, committed) — declares `services` (id, base_port, env_key, primary), `vars` (static `env_key`/`value` pairs written to `.env.local`, `value` templated), `clone_files`, `templates`, lifecycle `hooks.post_create` / `pre_remove`, and `project.{port_offset, worktree_root, pool_size}`. A project with no `config.yaml` is "lightweight" — `nerve new` still works but only does a plain `git worktree add`.
 - **`~/.config/nerve/projects.yaml`** (user-wide, gitignored from the repo) — maps logical project names to main-checkout paths. `XDG_CONFIG_HOME` is honored. Tests/walkthroughs override this to keep the real registry untouched.
 
 `internal/config` owns both. `LoadProjectConfig` returns `ErrNotFound` when the file is missing — callers (e.g. `loadProjectConfigOrLightweight` in `internal/cli/common.go`) interpret that as lightweight mode and pass `Cfg: nil` to `worktree.Create`.
@@ -66,7 +66,7 @@ The registry (`internal/registry`) is `<repo>/.nerve/ports.json`, guarded by a s
 3. `git worktree add` **first** — if this fails we haven't claimed a port yet.
 4. Lightweight short-circuit: if `Cfg == nil` or no services, optionally copy `.worktreeinclude` files and return.
 5. Open registry under exclusive lock, clean stale allocations, allocate ports. **If allocation fails, roll back the git worktree** — otherwise we leak a worktree with no allocation.
-6. Build template vars (`branch`, `project`, `worktree_path`, `ports.<id>` for each service), copy `clone_files`, render `templates`, write `.env.local` with per-service `EnvKey=port` pairs, run `post_create` hooks.
+6. Build template vars (`branch`, `project`, `worktree_path`, `ports.<id>` for each service), copy `clone_files`, render `templates`, write `.env.local` with per-service `EnvKey=port` pairs plus each `vars[]` entry (its `value` rendered through the `{{...}}` engine, so it can reference `ports.<id>`), run `post_create` hooks.
 
 `Remove` mirrors this in reverse: dirty/unpushed checks → `pre_remove` hooks → release port → `git worktree remove` → delete branch iff `CreatedByNerve` and not `KeepBranch`.
 

@@ -56,3 +56,52 @@ func TestValidateCloneFileEscape(t *testing.T) {
 		t.Errorf("expected escape rejection, got %v", err)
 	}
 }
+
+func TestValidateVarsOK(t *testing.T) {
+	cfg := Defaults()
+	cfg.Services = []Service{{ID: "django", BasePort: 8000, EnvKey: "DJANGO_PORT", Primary: true}}
+	cfg.Vars = []Var{{EnvKey: "WORKTREE_ID", Value: "{{branch}}"}}
+	if err := Validate(&cfg); err != nil {
+		t.Fatalf("expected valid config, got %v", err)
+	}
+}
+
+func TestValidateVarMissingValue(t *testing.T) {
+	cfg := Defaults()
+	cfg.Vars = []Var{{EnvKey: "WORKTREE_ID"}}
+	err := Validate(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "value is required") {
+		t.Errorf("expected value-required error, got %v", err)
+	}
+}
+
+func TestValidateVarMissingEnvKey(t *testing.T) {
+	cfg := Defaults()
+	cfg.Vars = []Var{{Value: "x"}}
+	err := Validate(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "env_key is required") {
+		t.Errorf("expected env_key-required error, got %v", err)
+	}
+}
+
+func TestValidateVarConflictsWithService(t *testing.T) {
+	cfg := Defaults()
+	cfg.Services = []Service{{ID: "django", BasePort: 8000, EnvKey: "SHARED", Primary: true}}
+	cfg.Vars = []Var{{EnvKey: "SHARED", Value: "x"}}
+	err := Validate(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "duplicate env_key") {
+		t.Errorf("expected duplicate env_key error (var vs service), got %v", err)
+	}
+}
+
+func TestValidateVarDuplicate(t *testing.T) {
+	cfg := Defaults()
+	cfg.Vars = []Var{
+		{EnvKey: "WORKTREE_ID", Value: "a"},
+		{EnvKey: "WORKTREE_ID", Value: "b"},
+	}
+	err := Validate(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "duplicate env_key") {
+		t.Errorf("expected duplicate env_key error (var vs var), got %v", err)
+	}
+}

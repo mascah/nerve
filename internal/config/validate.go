@@ -49,6 +49,21 @@ func Validate(cfg *ProjectConfig) error {
 		return fmt.Errorf("only one service may be marked primary")
 	}
 
+	// Static vars share the .env.local namespace with services, so env_key must be
+	// unique across both (seenEnvKey already holds every service env_key).
+	for i, v := range cfg.Vars {
+		if v.EnvKey == "" {
+			return fmt.Errorf("vars[%d]: env_key is required", i)
+		}
+		if v.Value == "" {
+			return fmt.Errorf("vars[%d] (%s): value is required", i, v.EnvKey)
+		}
+		if seenEnvKey[v.EnvKey] {
+			return fmt.Errorf("vars[%d] (%s): duplicate env_key %q", i, v.EnvKey, v.EnvKey)
+		}
+		seenEnvKey[v.EnvKey] = true
+	}
+
 	for i, f := range cfg.CloneFiles {
 		if f.Path == "" {
 			return fmt.Errorf("clone_files[%d]: path is required", i)
