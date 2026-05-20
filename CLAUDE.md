@@ -57,6 +57,8 @@ A short `net.Listen("tcp", "127.0.0.1:port")` probe rejects offsets where any se
 
 The registry (`internal/registry`) is `<repo>/.nerve/ports.json`, guarded by a sibling flock (`ports.json.lock`). All mutating access goes through `Handle.With(func(*Registry) error)`, which acquires the exclusive lock, reads, runs the callback, and writes atomically (temp + rename). Read-only callers use `Handle.Read()`.
 
+A second store, the **cross-project leases** file at `~/.config/nerve/ports.json` (user-wide, `XDG_CONFIG_HOME` honored — note the same basename as the per-project registry, but a different directory and schema), keeps two *different* projects from binding the same host port. `internal/leases` mirrors the registry's flock + atomic-write discipline. During `Create`, after the per-project registry allocation succeeds, the chosen ports are `Reserve`d in the leases store; a `LeaseChecker` is also passed into `ports.Allocate` as a pre-check so the allocator skips offsets another project already holds. **Lock order is load-bearing: per-project registry first, then the global leases store** — reversing it can deadlock concurrent `nerve new` calls across projects. `Remove` releases the lease.
+
 ### The worktree lifecycle (the place to make changes carefully)
 
 `internal/worktree.Create` is the single funnel for both `nerve new` and the `nerve worktree-create` hook. The order is load-bearing and the rollback step matters:

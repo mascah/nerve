@@ -23,13 +23,13 @@ func newListCmd() *cobra.Command {
 }
 
 type listEntry struct {
-	Project        string         `json:"project"`
-	Branch         string         `json:"branch"`
-	Path           string         `json:"path"`
-	IsMain         bool           `json:"is_main"`
-	PrimaryPort    int            `json:"primary_port,omitempty"`
-	Offset         int            `json:"offset,omitempty"`
-	PortByService  map[string]int `json:"ports,omitempty"`
+	Project       string         `json:"project"`
+	Branch        string         `json:"branch"`
+	Path          string         `json:"path"`
+	IsMain        bool           `json:"is_main"`
+	PrimaryPort   int            `json:"primary_port,omitempty"`
+	Offset        int            `json:"offset,omitempty"`
+	PortByService map[string]int `json:"ports,omitempty"`
 }
 
 func runList(cmd *cobra.Command, args []string) error {

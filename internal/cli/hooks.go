@@ -129,9 +129,9 @@ func runHooksShow(cmd *cobra.Command, _ []string) error {
 type hookScope int
 
 const (
-	hookScopeProjectLocal hookScope = iota // .claude/settings.local.json (default)
-	hookScopeProjectShared                 // .claude/settings.json (committed)
-	hookScopeUser                          // ~/.claude/settings.json
+	hookScopeProjectLocal  hookScope = iota // .claude/settings.local.json (default)
+	hookScopeProjectShared                  // .claude/settings.json (committed)
+	hookScopeUser                           // ~/.claude/settings.json
 )
 
 func resolveHookTargetFile(cmd *cobra.Command) (string, hookScope, error) {
