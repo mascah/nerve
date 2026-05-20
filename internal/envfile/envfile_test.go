@@ -62,6 +62,69 @@ func TestWriteFile(t *testing.T) {
 	}
 }
 
+// TestWriteFileNoLeftoverTemp verifies that WriteFile writes the expected
+// contents and leaves no leftover temp files in the target directory.
+func TestWriteFileNoLeftoverTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env.local")
+
+	vars := map[string]string{"DJANGO_PORT": "8001", "VITE_PORT": "5173"}
+	if err := WriteFile(path, vars); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the written contents.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "DJANGO_PORT=8001\nVITE_PORT=5173\n"
+	if string(raw) != want {
+		t.Errorf("contents: got %q, want %q", string(raw), want)
+	}
+
+	// Verify no leftover temp files remain in the target directory.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != ".env.local" {
+			t.Errorf("unexpected leftover file in target dir: %s", e.Name())
+		}
+	}
+}
+
+// TestWriteFileTempInTargetDir verifies that the temp file is created in the
+// target's directory (same filesystem), which avoids EXDEV errors on cross-device
+// renames when $TMPDIR is on a different filesystem than the target path.
+func TestWriteFileTempInTargetDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env.local")
+
+	if err := WriteFile(path, map[string]string{"PORT": "9000"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirm the file exists at the target path with correct permissions.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("permissions: got %04o, want 0644", perm)
+	}
+
+	// Confirm contents are correct.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "PORT=9000\n" {
+		t.Errorf("contents: got %q", string(raw))
+	}
+}
+
 func TestAppendToClaudeEnv(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, "claude.env")

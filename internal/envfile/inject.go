@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // AppendToClaudeEnv appends `export KEY=VALUE` lines from vars to the file at
@@ -42,7 +43,7 @@ func WriteFile(path string, vars map[string]string) error {
 		return errors.New("envfile: empty path")
 	}
 	body := Render(vars)
-	tmp, err := os.CreateTemp("", "nerve-envfile-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), "nerve-envfile-*")
 	if err != nil {
 		return err
 	}
