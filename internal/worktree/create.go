@@ -235,11 +235,22 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		}
 	}
 
-	// Write .env.local with per-service ports.
-	envVars := make(map[string]string, len(cfg.Services))
+	// Write .env.local with per-service ports + static vars.
+	envVars := make(map[string]string, len(cfg.Services)+len(cfg.Vars))
 	for i := range cfg.Services {
 		svc := &cfg.Services[i]
 		envVars[svc.EnvKey] = strconv.Itoa(allocation.PortByService[svc.ID])
+	}
+	// Static vars render through the same {{...}} engine as templates. tmplVars
+	// already holds branch/project/worktree_path + ports.<id> (built above), so a
+	// var value can interpolate any of them — e.g. value: "{{ports.postgres}}".
+	for i := range cfg.Vars {
+		v := &cfg.Vars[i]
+		rendered, err := config.RenderTemplateBody(v.Value, tmplVars)
+		if err != nil {
+			return res, fmt.Errorf("render var %s: %w", v.EnvKey, err)
+		}
+		envVars[v.EnvKey] = rendered
 	}
 	envPath := filepath.Join(worktreePath, ".env.local")
 	if err := envfile.WriteFile(envPath, envVars); err != nil {

@@ -5,6 +5,7 @@ type ProjectConfig struct {
 	Version    int             `yaml:"version"`
 	Project    ProjectSettings `yaml:"project"`
 	Services   []Service       `yaml:"services,omitempty"`
+	Vars       []Var           `yaml:"vars,omitempty"`
 	CloneFiles []CloneFile     `yaml:"clone_files,omitempty"`
 	Templates  []Template      `yaml:"templates,omitempty"`
 	Hooks      LifecycleHooks  `yaml:"hooks,omitempty"`
@@ -23,6 +24,18 @@ type Service struct {
 	BasePort int    `yaml:"base_port"`
 	EnvKey   string `yaml:"env_key"`
 	Primary  bool   `yaml:"primary,omitempty"`
+}
+
+// Var is a static, per-worktree environment value written to .env.local alongside
+// the per-service port keys. Value is rendered through the same {{...}} template
+// engine as templates, so the worktree's template vars (branch, project,
+// worktree_path, ports.<id>) are available. Use it for non-port strings that a
+// non-shell consumer reads straight from .env.local — e.g. a WORKTREE_ID for
+// `docker compose --env-file`, which interpolates ${WORKTREE_ID} for container,
+// volume, and network names and never runs a shell loader like direnv.
+type Var struct {
+	EnvKey string `yaml:"env_key"`
+	Value  string `yaml:"value"`
 }
 
 // CloneFile is a file or directory copied from the main checkout into a new worktree.

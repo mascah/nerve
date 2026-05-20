@@ -121,6 +121,8 @@ services:
     - id: vite
       base_port: 5173
       env_key: VITE_PORT
+vars:
+    - { env_key: WORKTREE_ID, value: "{{branch}}" }
 clone_files:
     - { path: .env,    kind: file, required: true  }
     - { path: .npmrc,  kind: file, required: false }
@@ -160,6 +162,7 @@ cat "$SANDBOX/demo/.worktrees/feat-configured/.env.local"
 # DOCKER_HOST_DJANGO_PORT=8001
 # DOCKER_HOST_POSTGRES_PORT=5433
 # VITE_PORT=5174
+# WORKTREE_ID=feat-configured       (vars[] entry, value rendered through {{...}})
 
 ls "$SANDBOX/demo/.worktrees/feat-configured/"
 # .env  .npmrc  .env.local  README.md   (.env + .npmrc are the cloned files)

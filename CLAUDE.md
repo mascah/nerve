@@ -44,7 +44,7 @@ Release: `goreleaser release --clean` (darwin arm64+amd64; the Homebrew tap stan
 
 ### Two layers of config
 
-- **`<repo>/.nerve/config.yaml`** (per-project, committed) — declares `services` (id, base_port, env_key, primary), `clone_files`, `templates`, lifecycle `hooks.post_create` / `pre_remove`, and `project.{port_offset, worktree_root, pool_size}`. A project with no `config.yaml` is "lightweight" — `nerve new` still works but only does a plain `git worktree add`.
+- **`<repo>/.nerve/config.yaml`** (per-project, committed) — declares `services` (id, base_port, env_key, primary), `vars` (static `env_key`/`value` pairs written to `.env.local`, `value` templated), `clone_files`, `templates`, lifecycle `hooks.post_create` / `pre_remove`, and `project.{port_offset, worktree_root, pool_size}`. A project with no `config.yaml` is "lightweight" — `nerve new` still works but only does a plain `git worktree add`.
 - **`~/.config/nerve/projects.yaml`** (user-wide, gitignored from the repo) — maps logical project names to main-checkout paths. `XDG_CONFIG_HOME` is honored. Tests/walkthroughs override this to keep the real registry untouched.
 
 `internal/config` owns both. `LoadProjectConfig` returns `ErrNotFound` when the file is missing — callers (e.g. `loadProjectConfigOrLightweight` in `internal/cli/common.go`) interpret that as lightweight mode and pass `Cfg: nil` to `worktree.Create`.
