@@ -33,11 +33,11 @@ type CreateOptions struct {
 
 // CreateResult summarizes what was created.
 type CreateResult struct {
-	Path          string
-	Branch        string
-	Offset        int            // 0 in lightweight mode
-	PrimaryPort   int            // 0 in lightweight mode
-	PortByService map[string]int // empty in lightweight mode
+	Path           string
+	Branch         string
+	Offset         int            // 0 in lightweight mode
+	PrimaryPort    int            // 0 in lightweight mode
+	PortByService  map[string]int // empty in lightweight mode
 	GitignoreAdded []string
 }
 
@@ -59,9 +59,16 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	if projectName == "" {
 		projectName = filepath.Base(opts.RepoRoot)
 	}
+	// Computed before any side effects so an unusable branch fails fast (before
+	// `git worktree add`), with no worktree/port to roll back.
+	branchSlug := config.Slugify(opts.Branch)
+	if branchSlug == "" {
+		return nil, fmt.Errorf("branch %q has no alphanumeric characters to form a branch_slug", opts.Branch)
+	}
 	rel := config.RenderPath(tmpl, map[string]string{
-		"branch":  opts.Branch,
-		"project": projectName,
+		"branch":      opts.Branch,
+		"project":     projectName,
+		"branch_slug": branchSlug,
 	})
 	worktreePath := rel
 	if !filepath.IsAbs(worktreePath) {
@@ -194,11 +201,12 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	res.PrimaryPort = allocation.PrimaryPort
 	res.PortByService = allocation.PortByService
 
-	// Build template vars (ports.<id> + branch/project/worktree_path).
+	// Build template vars (ports.<id> + branch/project/worktree_path/branch_slug).
 	tmplVars := map[string]string{
 		"branch":        opts.Branch,
 		"project":       projectName,
 		"worktree_path": worktreePath,
+		"branch_slug":   branchSlug,
 	}
 	for id, p := range allocation.PortByService {
 		tmplVars["ports."+id] = strconv.Itoa(p)

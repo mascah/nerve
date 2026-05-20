@@ -19,6 +19,31 @@ func RenderPath(tmpl string, vars map[string]string) string {
 	return out
 }
 
+// Slugify converts an arbitrary branch name into an identifier-safe slug:
+// lowercased, with every character outside [a-z0-9] replaced by '_', and any
+// trailing underscores trimmed. It matches the de-facto convention used by
+// Docker, Postgres, and most Linux tooling, mirroring the shell recipe it
+// replaces:
+//
+//	tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '_' | sed 's/_*$//'
+//
+// Runs of underscores are intentionally not collapsed, matching that recipe.
+// Returns "" for a branch with no alphanumeric characters (e.g. "___"); callers
+// that need a non-empty identifier should reject that case.
+func Slugify(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.TrimRight(b.String(), "_")
+}
+
 // RenderTemplateBody applies {{key}} substitution to a file body. Unlike RenderPath
 // this uses double braces so dotenv files using shell braces aren't accidentally
 // substituted. Returns an error if an undeclared placeholder is encountered.

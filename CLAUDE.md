@@ -61,12 +61,12 @@ The registry (`internal/registry`) is `<repo>/.nerve/ports.json`, guarded by a s
 
 `internal/worktree.Create` is the single funnel for both `nerve new` and the `nerve worktree-create` hook. The order is load-bearing and the rollback step matters:
 
-1. Compute target path from `worktree_root` template (`{branch}` / `{project}` substitution).
+1. Compute target path from `worktree_root` template (`{branch}` / `{project}` / `{branch_slug}` substitution).
 2. Ensure `.worktrees/` is in `.gitignore` (and `.nerve/ports.json` + `.nerve/*.lock` when configured).
 3. `git worktree add` **first** — if this fails we haven't claimed a port yet.
 4. Lightweight short-circuit: if `Cfg == nil` or no services, optionally copy `.worktreeinclude` files and return.
 5. Open registry under exclusive lock, clean stale allocations, allocate ports. **If allocation fails, roll back the git worktree** — otherwise we leak a worktree with no allocation.
-6. Build template vars (`branch`, `project`, `worktree_path`, `ports.<id>` for each service), copy `clone_files`, render `templates`, write `.env.local` with per-service `EnvKey=port` pairs, run `post_create` hooks.
+6. Build template vars (`branch`, `project`, `worktree_path`, `branch_slug`, `ports.<id>` for each service), copy `clone_files`, render `templates`, write `.env.local` with per-service `EnvKey=port` pairs, run `post_create` hooks. `branch_slug` is the branch name lowered to `[a-z0-9_]` (via `config.Slugify`) for identifier-safe Docker/Postgres/etc. names; an all-punctuation branch errors before `git worktree add`.
 
 `Remove` mirrors this in reverse: dirty/unpushed checks → `pre_remove` hooks → release port → `git worktree remove` → delete branch iff `CreatedByNerve` and not `KeepBranch`.
 
