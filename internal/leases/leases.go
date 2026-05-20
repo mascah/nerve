@@ -15,18 +15,13 @@
 package leases
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
-	"github.com/gofrs/flock"
-
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/jsonstore"
 )
 
 // CurrentVersion is the schema version written to ports.json.
@@ -48,12 +43,18 @@ type file struct {
 	Leases  map[string]Lease `json:"leases"`
 }
 
+// SchemaVersion implements jsonstore.Document.
+func (f *file) SchemaVersion() int { return f.Version }
+
+// SetSchemaVersion implements jsonstore.Document.
+func (f *file) SetSchemaVersion(v int) { f.Version = v }
+
 // ConflictError is returned by Reserve when a requested port is already leased
 // to a different worktree path.
 type ConflictError struct {
-	Port        int
-	ByProject   string
-	ByWorktree  string
+	Port       int
+	ByProject  string
+	ByWorktree string
 }
 
 func (e *ConflictError) Error() string {
@@ -63,8 +64,7 @@ func (e *ConflictError) Error() string {
 // Store is the entry point for leases operations. Methods that mutate run
 // under an exclusive flock on a sibling lock file; reads use a shared lock.
 type Store struct {
-	path     string
-	lockPath string
+	js *jsonstore.Store[*file]
 }
 
 // Open returns a Store bound to the user-wide leases path. The file (and parent
@@ -78,28 +78,31 @@ func Open() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{path: p, lockPath: lk}, nil
+	js := jsonstore.New(jsonstore.Config[*file]{
+		Path:     p,
+		LockPath: lk,
+		Current:  CurrentVersion,
+		Label:    "port leases",
+		NewEmpty: func() *file { return &file{Leases: map[string]Lease{}} },
+	})
+	return &Store{js: js}, nil
 }
 
 // Path returns the on-disk path the store reads/writes (mostly for diagnostics).
-func (s *Store) Path() string { return s.path }
+func (s *Store) Path() string { return s.js.Path() }
 
 // LockPath returns the sibling flock path (mostly for diagnostics).
-func (s *Store) LockPath() string { return s.lockPath }
+func (s *Store) LockPath() string { return s.js.LockPath() }
 
 // Read returns a snapshot of all current leases keyed by port number. Holds a
 // shared lock just long enough to read the file. Suitable as a pre-check before
 // the allocator picks an offset; the authoritative race-safe gate is Reserve.
 func (s *Store) Read() (map[int]Lease, error) {
-	if err := s.ensureDir(); err != nil {
+	f, err := s.js.Read()
+	if err != nil {
 		return nil, err
 	}
-	lk := flock.New(s.lockPath)
-	if err := lk.RLock(); err != nil {
-		return nil, fmt.Errorf("acquire shared lock %s: %w", s.lockPath, err)
-	}
-	defer lk.Unlock()
-	return s.readUnlocked()
+	return f.toMap(), nil
 }
 
 // With runs fn under an exclusive flock with a mutable view of the leases map.
@@ -108,22 +111,14 @@ func (s *Store) Read() (map[int]Lease, error) {
 //
 // fn must not retain the map beyond its return.
 func (s *Store) With(fn func(map[int]Lease) error) error {
-	if err := s.ensureDir(); err != nil {
-		return err
-	}
-	lk := flock.New(s.lockPath)
-	if err := lk.Lock(); err != nil {
-		return fmt.Errorf("acquire lock %s: %w", s.lockPath, err)
-	}
-	defer lk.Unlock()
-	cur, err := s.readUnlocked()
-	if err != nil {
-		return err
-	}
-	if err := fn(cur); err != nil {
-		return err
-	}
-	return writeAtomic(s.path, cur)
+	return s.js.With(func(f *file) error {
+		m := f.toMap()
+		if err := fn(m); err != nil {
+			return err
+		}
+		f.fromMap(m)
+		return nil
+	})
 }
 
 // Reserve atomically claims the given ports for lease. All ports must either be
@@ -225,20 +220,9 @@ func (s *Store) Prune(activeWorktrees []string) ([]int, error) {
 	return dropped, err
 }
 
-// readUnlocked reads and parses the on-disk file. Returns an empty map (NOT an
-// error) when the file is missing — leases are best-effort additive.
-func (s *Store) readUnlocked() (map[int]Lease, error) {
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return map[int]Lease{}, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", s.path, err)
-	}
-	var f file
-	if err := json.Unmarshal(raw, &f); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", s.path, err)
-	}
+// toMap converts the on-disk string-keyed leases into the int-keyed map the
+// store's API operates on. Unparseable port keys are skipped.
+func (f *file) toMap() map[int]Lease {
 	out := make(map[int]Lease, len(f.Leases))
 	for k, v := range f.Leases {
 		p, err := strconv.Atoi(k)
@@ -247,48 +231,15 @@ func (s *Store) readUnlocked() (map[int]Lease, error) {
 		}
 		out[p] = v
 	}
-	return out, nil
+	return out
 }
 
-func (s *Store) ensureDir() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(s.path), err)
-	}
-	return nil
-}
-
-// writeAtomic serializes the leases map and writes to path via temp+rename.
-func writeAtomic(path string, m map[int]Lease) error {
-	out := file{Version: CurrentVersion, Leases: make(map[string]Lease, len(m))}
+// fromMap rewrites the on-disk string-keyed leases from an int-keyed map.
+func (f *file) fromMap(m map[int]Lease) {
+	f.Leases = make(map[string]Lease, len(m))
 	for p, l := range m {
-		out.Leases[strconv.Itoa(p)] = l
+		f.Leases[strconv.Itoa(p)] = l
 	}
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
 }
 
 // Checker is a read-only view of the leases store used by the ports allocator
