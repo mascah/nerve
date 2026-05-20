@@ -92,14 +92,3 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
-
-// exitCodeError lets RunE bubble up a custom exit code via main.go (which already
-// exits 1 on any error). Currently nerve uses 1 for all RunE errors; we can attach
-// behavior later.
-type exitCodeError struct {
-	Code int
-	Err  error
-}
-
-func (e exitCodeError) Error() string { return e.Err.Error() }
-func (e exitCodeError) Unwrap() error { return e.Err }
