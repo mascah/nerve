@@ -12,9 +12,11 @@ import (
 )
 
 // renderTemplates applies each template entry from cfg.Templates against srcRoot,
-// writing to dstRoot. Substitution variables are taken from tmplVars; for entries
-// with Merge=true, the existing destination file's keys are preserved and new keys
-// from the source are appended (dotenv-style additive merge).
+// writing to dstRoot. Substitution variables are taken from tmplVars; the supported
+// keys are: branch, project, worktree_path, branch_slug, and ports.<id> for each
+// configured service. For entries with Merge=true, the existing destination file's
+// keys are preserved and new keys from the source are appended (dotenv-style
+// additive merge).
 func renderTemplates(srcRoot, dstRoot string, cfg *config.ProjectConfig, tmplVars map[string]string, log io.Writer) error {
 	for _, t := range cfg.Templates {
 		src := filepath.Join(srcRoot, t.Source)
