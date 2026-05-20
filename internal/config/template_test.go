@@ -44,3 +44,29 @@ func TestRenderTemplateBodyMissing(t *testing.T) {
 		t.Errorf("expected missing-var error mentioning django, got %v", err)
 	}
 }
+
+func TestSlugify(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"feat/OF-351_thing", "feat_of_351_thing"},
+		{"Bug-Fix.v2", "bug_fix_v2"},
+		{"feat-foo", "feat_foo"},
+		{"already_ok", "already_ok"},
+		{"feat/", "feat"},      // trailing underscore trimmed
+		{"feat__", "feat"},     // trailing underscores trimmed
+		{".hidden", "_hidden"}, // leading underscore preserved
+		{"a//b", "a__b"},       // runs not collapsed
+		{"", ""},
+		{"___", ""}, // no alphanumerics -> empty
+		{"-.-", ""}, // no alphanumerics -> empty
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := Slugify(c.in); got != c.want {
+				t.Errorf("Slugify(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
