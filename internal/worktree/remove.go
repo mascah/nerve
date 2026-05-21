@@ -43,7 +43,7 @@ type RemoveOptions struct {
 
 // RemoveResult summarizes what was cleaned up.
 type RemoveResult struct {
-	ReleasedPort string // registry key, empty if no allocation existed
+	ReleasedPort  string // registry key, empty if no allocation existed
 	BranchDeleted bool
 }
 
@@ -78,7 +78,7 @@ func Remove(opts RemoveOptions) (*RemoveResult, error) {
 	// Run pre_remove hooks before any destructive action.
 	if opts.Cfg != nil && len(opts.Cfg.Hooks.PreRemove) > 0 {
 		fmt.Fprintln(log, "running pre_remove hooks:")
-		if err := RunHooks(opts.WorktreePath, opts.Cfg.Hooks.PreRemove, log); err != nil {
+		if err := RunHooks(opts.WorktreePath, opts.Cfg.Hooks.PreRemove, nil, log); err != nil {
 			return res, err
 		}
 	}
