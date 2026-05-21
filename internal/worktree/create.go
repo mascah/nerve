@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mascah/nerve/internal/clone"
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/envfile"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/hookstatus"
 	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/ports"
 	"github.com/mascah/nerve/internal/registry"
@@ -88,6 +90,8 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		gitignoreEntries = append(gitignoreEntries,
 			".nerve/ports.json",
 			".nerve/*.lock",
+			".nerve/hooks/",
+			".nerve/trash/",
 			".env.local",
 		)
 	}
@@ -258,11 +262,40 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	}
 	fmt.Fprintf(log, "wrote %s\n", envPath)
 
-	// Run post_create hooks.
+	// Run post_create hooks. When the project opted into background_post_create we
+	// hand them to a detached child so this call (and the WorktreeCreate hook that
+	// prints the path) returns immediately — `claude --worktree` boots without
+	// waiting on slow installs. The child records progress under
+	// .nerve/hooks/<slug>/ so the TUI / `nerve list` can show when it finishes.
 	if !opts.SkipHooks && len(cfg.Hooks.PostCreate) > 0 {
-		fmt.Fprintln(log, "running post_create hooks:")
-		if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, log); err != nil {
-			return res, err
+		if cfg.Project.BackgroundPostCreate && backgroundSupported() {
+			// Mark "running" up front so read-side surfaces reflect it the instant
+			// the path is printed, then spawn the detached runner.
+			_ = hookstatus.Write(opts.RepoRoot, branchSlug, hookstatus.Status{
+				State:     hookstatus.StateRunning,
+				StartedAt: time.Now(),
+			})
+			if err := spawnDetachedFn("run-hooks",
+				"--repo", opts.RepoRoot,
+				"--worktree", worktreePath,
+				"--branch", opts.Branch,
+			); err != nil {
+				// Couldn't detach — fall back to running synchronously rather than
+				// silently skipping the project's bootstrap.
+				fmt.Fprintf(log, "warning: could not background post_create hooks (%v); running synchronously\n", err)
+				_ = hookstatus.Clear(opts.RepoRoot, branchSlug)
+				fmt.Fprintln(log, "running post_create hooks:")
+				if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, log); err != nil {
+					return res, err
+				}
+			} else {
+				fmt.Fprintf(log, "post_create hooks running in background (see .nerve/hooks/%s/log)\n", branchSlug)
+			}
+		} else {
+			fmt.Fprintln(log, "running post_create hooks:")
+			if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, log); err != nil {
+				return res, err
+			}
 		}
 	}
 

@@ -236,6 +236,48 @@ hooks:
         - "echo 'pre-remove ran' > /tmp/nerve-walkthrough-preremove.txt"
 ```
 
+### Backgrounded post_create + teardown (opt-in)
+
+By default hooks run synchronously and `nerve new` blocks until they finish. Set the two opt-in flags under `project:` to move that work off the critical path:
+
+```yaml
+project:
+    background_post_create: true
+    background_remove: true
+hooks:
+    post_create:
+        - "sleep 5 && echo done > bootstrap.marker"   # stand-in for a slow install
+```
+
+Backgrounded create returns immediately and reports it:
+```bash
+nerve -v new demo feat-bg
+# ...
+# post_create hooks running in background (see .nerve/hooks/feat_bg/log)
+# Summary table prints right away — note branch_slug "feat_bg"
+
+nerve list demo                    # HOOKS column shows "running", then "ok" after ~5s
+cat "$SANDBOX/demo/.nerve/hooks/feat_bg/status.json"   # {"state":"running"...} → {"state":"ok"...}
+cat "$SANDBOX/demo/.nerve/hooks/feat_bg/log"           # the hook output
+ls "$SANDBOX/demo/.worktrees/feat-bg/bootstrap.marker" # appears once hooks finish
+```
+A failing hook (`exit 1`) lands `{"state":"failed","exit_code":1,"failed_command":...}` and `nerve list` shows `failed`.
+
+Backgrounded remove returns instantly; git's view is reconciled synchronously so there's no phantom worktree:
+```bash
+nerve remove --force demo feat-bg
+nerve list demo                    # feat-bg already gone (prune ran synchronously)
+ls "$SANDBOX/demo/.nerve/trash/"   # the bytes may briefly remain here, deleted detached
+```
+
+`background_remove` falls back to a synchronous `git worktree remove` when `worktree_root` is on a different filesystem than `.nerve/` (the atomic rename into `.nerve/trash/` isn't possible across filesystems).
+
+If a detached delete is ever interrupted, the bytes linger under `.nerve/trash/`. `nerve doctor` reports them as an informational `•` line (not an issue — they self-heal on the next remove), and `nerve gc [<project>]` clears them on demand:
+```bash
+nerve doctor                       # → "• N leftover item(s) in .nerve/trash (…) — run `nerve gc demo`"
+nerve gc demo                      # → "cleared N item(s) (…) from .nerve/trash"
+```
+
 ### Refresh after editing services
 1. Add a new service to `.nerve/config.yaml` (e.g. `redis`, base_port 6379, env_key `REDIS_PORT`).
 2. `cd` into a worktree and run `nerve refresh`.

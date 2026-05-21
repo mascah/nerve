@@ -52,6 +52,7 @@ nerve hooks install --project
 | `nerve list [<project>]` | List worktrees + allocated ports |
 | `nerve env --inject` | Append per-worktree env to `$CLAUDE_ENV_FILE` |
 | `nerve ports list/cleanup/status` | Inspect port registry |
+| `nerve gc [<project>]` | Clear leftover bytes in `.nerve/trash` (from an interrupted `background_remove`) |
 | `nerve hooks install` | Wire into Claude Code |
 | `nerve worktree-create` / `nerve worktree-remove --from-hook` | Stdin-driven entry points for Claude Code hooks |
 | `nerve refresh` | Re-render templates + env in cwd worktree |
@@ -68,6 +69,19 @@ nerve hooks install --project
 | `SessionStart` + `CwdChanged` | `nerve env --inject` | Appends per-worktree port env vars to `$CLAUDE_ENV_FILE` so Bash tool calls see them |
 
 After install, `claude --worktree feat-foo` from a nerve-registered repo will create the worktree at `<repo>/.worktrees/feat-foo/` (instead of Claude's default `<repo>/.claude/worktrees/`), with ports allocated and env vars wired up for the session.
+
+### Fast boot & teardown (opt-in)
+
+For large projects, `post_create` installs (`uv sync`, `pnpm i`) and the recursive delete of `node_modules`/`.venv` on teardown can each take 30+ seconds, and `claude --worktree` blocks on them. Two per-project flags move that work off the critical path. Both default to `false` (fully synchronous — the env is guaranteed ready before the path is printed, and teardown is complete when the command returns); enable them per project under `project:` in `.nerve/config.yaml`:
+
+```yaml
+project:
+  background_post_create: true   # print the worktree path immediately; run post_create hooks in a detached process
+  background_remove: true         # return from teardown immediately; trash + delete the worktree dir in the background
+```
+
+- **`background_post_create`** — `claude --worktree` boots right away while hooks run detached. Progress and a terminal `running`/`ok`/`failed` status are written under `.nerve/hooks/<branch_slug>/`; `nerve list` and the TUI Worktrees tab show a `HOOKS` column so you can tell when bootstrap finished. Note the trade-off: an agent could start a dev server before `pnpm i` has finished — leave this off for projects where that bites.
+- **`background_remove`** — teardown renames the worktree into `.nerve/trash/` (instant) and deletes the bytes in a detached process. git's own metadata is reconciled *synchronously* (`git worktree prune`), so its view never goes out of sync even if the background delete is interrupted; leftovers are swept on the next remove. Falls back to a synchronous delete if the worktree lives on a different filesystem than `.nerve/`. If a detached delete is ever interrupted, `nerve doctor` reports the leftover bytes and `nerve gc` clears them on demand.
 
 ### Install scope: which settings file
 
