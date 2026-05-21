@@ -102,4 +102,3 @@ func worktreeStateFor(path string) string {
 	}
 	return "clean"
 }
-
