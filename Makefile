@@ -21,6 +21,16 @@ test:
 vet:
 	go vet ./...
 
+# lint runs golangci-lint if available, otherwise falls back to go vet.
+# Install golangci-lint: https://golangci-lint.run/usage/install/
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not found; running go vet instead"; \
+		go vet ./...; \
+	fi
+
 fmt:
 	gofmt -s -w .
 
