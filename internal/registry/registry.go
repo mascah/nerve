@@ -1,47 +1,44 @@
 package registry
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
-	"github.com/gofrs/flock"
-
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/jsonstore"
 )
 
 // Open returns a Handle bound to the per-project port registry. The handle does NOT
 // acquire the lock; callers use h.With() to run mutating logic under flock.
 func Open(repoRoot string) *Handle {
-	return &Handle{
-		repoRoot: repoRoot,
-		path:     config.PortRegistryPath(repoRoot),
-		lockPath: config.PortLockPath(repoRoot),
-	}
+	store := jsonstore.New(jsonstore.Config[*Registry]{
+		Path:     config.PortRegistryPath(repoRoot),
+		LockPath: config.PortLockPath(repoRoot),
+		Current:  CurrentVersion,
+		Label:    "port registry",
+		NewEmpty: newEmpty,
+	})
+	return &Handle{repoRoot: repoRoot, store: store}
 }
 
 // Handle is the entry point for all registry operations. Methods on Handle that read
 // without writing do their own lightweight locking; mutating logic should go through With.
 type Handle struct {
 	repoRoot string
-	path     string
-	lockPath string
+	store    *jsonstore.Store[*Registry]
 }
 
 // Read returns the current registry contents without holding the lock for any duration
 // beyond the call. Suitable for `nerve list`, `nerve ports list`, etc.
 func (h *Handle) Read() (*Registry, error) {
-	lk := flock.New(h.lockPath)
-	if err := acquireShared(lk); err != nil {
+	reg, err := h.store.Read()
+	if err != nil {
 		return nil, err
 	}
-	defer lk.Unlock()
-	return h.readUnlocked()
+	normalize(reg)
+	return reg, nil
 }
 
 // With runs fn under an exclusive flock. fn receives a mutable Registry pointer; if
@@ -49,23 +46,10 @@ func (h *Handle) Read() (*Registry, error) {
 // registry is left untouched and the error is propagated. fn must not retain the
 // pointer beyond its return.
 func (h *Handle) With(fn func(*Registry) error) error {
-	if err := os.MkdirAll(filepath.Dir(h.path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(h.path), err)
-	}
-	lk := flock.New(h.lockPath)
-	if err := lk.Lock(); err != nil {
-		return fmt.Errorf("acquire lock %s: %w", h.lockPath, err)
-	}
-	defer lk.Unlock()
-
-	reg, err := h.readUnlocked()
-	if err != nil {
-		return err
-	}
-	if err := fn(reg); err != nil {
-		return err
-	}
-	return writeAtomic(h.path, reg)
+	return h.store.With(func(reg *Registry) error {
+		normalize(reg)
+		return fn(reg)
+	})
 }
 
 // FindByWorktreePath looks up an allocation by absolute worktree path. Returns the
@@ -97,29 +81,16 @@ func (h *Handle) FindByWorktreePath(path string) (string, Allocation, bool, erro
 	return "", Allocation{}, false, nil
 }
 
-func (h *Handle) readUnlocked() (*Registry, error) {
-	raw, err := os.ReadFile(h.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return newEmpty(h.repoRoot), nil
-		}
-		return nil, fmt.Errorf("read %s: %w", h.path, err)
-	}
-	var reg Registry
-	if err := json.Unmarshal(raw, &reg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", h.path, err)
-	}
+// normalize ensures the registry's allocation map is non-nil so callbacks and
+// Claim can write into it (a JSON document with a missing or null "allocations"
+// would otherwise leave it nil).
+func normalize(reg *Registry) {
 	if reg.Allocations == nil {
 		reg.Allocations = make(map[string]Allocation)
 	}
-	if reg.Version == 0 {
-		reg.Version = CurrentVersion
-	}
-	return &reg, nil
 }
 
-func newEmpty(repoRoot string) *Registry {
-	_ = repoRoot
+func newEmpty() *Registry {
 	return &Registry{
 		Version:     CurrentVersion,
 		Allocations: make(map[string]Allocation),
@@ -183,6 +154,9 @@ func AllocatedOffsets(reg *Registry) map[int]bool {
 // Claim inserts a new allocation. Returns an error if the port key already exists.
 func (r *Registry) Claim(port int, a Allocation) error {
 	key := strconv.Itoa(port)
+	if r.Allocations == nil {
+		r.Allocations = make(map[string]Allocation)
+	}
 	if _, ok := r.Allocations[key]; ok {
 		return fmt.Errorf("port %d already allocated", port)
 	}
@@ -214,41 +188,4 @@ func (r *Registry) ReleaseByWorktreePath(worktreePath string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// writeAtomic marshals reg as pretty JSON and writes to path via temp+rename.
-func writeAtomic(path string, reg *Registry) error {
-	data, err := json.MarshalIndent(reg, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func acquireShared(lk *flock.Flock) error {
-	if err := lk.RLock(); err != nil {
-		return fmt.Errorf("acquire shared lock: %w", err)
-	}
-	return nil
 }

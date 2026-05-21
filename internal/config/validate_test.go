@@ -105,3 +105,37 @@ func TestValidateVarDuplicate(t *testing.T) {
 		t.Errorf("expected duplicate env_key error (var vs var), got %v", err)
 	}
 }
+
+func TestValidateVersionZeroCoerced(t *testing.T) {
+	cfg := Defaults()
+	cfg.Version = 0
+	if err := Validate(&cfg); err != nil {
+		t.Fatalf("version 0 should coerce to current and validate, got: %v", err)
+	}
+	if cfg.Version != CurrentConfigVersion {
+		t.Errorf("version 0 should coerce to %d, got %d", CurrentConfigVersion, cfg.Version)
+	}
+}
+
+func TestValidateOlderVersionAccepted(t *testing.T) {
+	cfg := Defaults()
+	// CurrentConfigVersion is 1; any version <= current is forward-compatible.
+	cfg.Version = CurrentConfigVersion
+	if err := Validate(&cfg); err != nil {
+		t.Fatalf("version <= current should be accepted, got: %v", err)
+	}
+}
+
+func TestValidateFutureVersionRejected(t *testing.T) {
+	cfg := Defaults()
+	cfg.Version = CurrentConfigVersion + 1
+	err := Validate(&cfg)
+	if err == nil {
+		t.Fatalf("expected rejection of future config version")
+	}
+	for _, want := range []string{"newer version of nerve", "upgrade nerve"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}

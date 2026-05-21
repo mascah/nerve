@@ -10,8 +10,16 @@ func Validate(cfg *ProjectConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	if cfg.Version != CurrentConfigVersion {
-		return fmt.Errorf("unsupported config version %d (expected %d)", cfg.Version, CurrentConfigVersion)
+	// Schema-version policy (shared with internal/registry and internal/leases via
+	// internal/jsonstore): a stored version <= current is accepted (0 coerces to
+	// current; older versions are forward-compatible); a version > current is
+	// rejected so users on an old nerve get a clear "upgrade" message instead of a
+	// confusing structural error.
+	if cfg.Version == 0 {
+		cfg.Version = CurrentConfigVersion
+	}
+	if cfg.Version > CurrentConfigVersion {
+		return fmt.Errorf("config was written by a newer version of nerve (v%d > v%d); upgrade nerve", cfg.Version, CurrentConfigVersion)
 	}
 	if cfg.Project.PoolSize < 1 {
 		return fmt.Errorf("project.pool_size must be >= 1")
