@@ -102,7 +102,8 @@ func runRemove(cmd *cobra.Command, args []string) error {
 }
 
 // resolveRemoveTarget figures out which worktree to remove from the given args.
-// Supports: (no args) → cwd; (project) → ambiguous (returns error); (project, branch).
+// Supports: (no args) → cwd worktree; (branch) → that branch in cwd's project;
+// (project, branch) → explicit.
 func resolveRemoveTarget(args []string) (repoRoot, wtPath, branch string, entry *config.ProjectEntry, err error) {
 	switch len(args) {
 	case 0:
@@ -131,27 +132,47 @@ func resolveRemoveTarget(args []string) (repoRoot, wtPath, branch string, entry 
 		}
 		return info.MainCheckout, info.CurrentWorktree, branch, entry, nil
 
+	case 1:
+		// `remove <branch>` — infer the project from cwd, like `new <branch>`.
+		entry, err := resolveCwdProject()
+		if err != nil {
+			return "", "", "", nil, err
+		}
+		repoRoot, wtPath, err = worktreeForBranch(entry, args[0])
+		if err != nil {
+			return "", "", "", nil, err
+		}
+		return repoRoot, wtPath, args[0], entry, nil
+
 	case 2:
 		entry, _, err := resolveProject(args[0])
 		if err != nil {
 			return "", "", "", nil, err
 		}
-		branch = args[1]
-		// Find the worktree path by listing git worktrees for repoRoot and matching branch.
-		worktrees, err := gitutil.ListWorktrees(entry.Path)
+		repoRoot, wtPath, err = worktreeForBranch(entry, args[1])
 		if err != nil {
 			return "", "", "", nil, err
 		}
-		for _, w := range worktrees {
-			if w.Branch == branch {
-				return entry.Path, w.Path, branch, entry, nil
-			}
-		}
-		return "", "", "", nil, fmt.Errorf("no worktree for branch %q in project %q", branch, entry.Name)
+		return repoRoot, wtPath, args[1], entry, nil
 
 	default:
-		return "", "", "", nil, fmt.Errorf("provide either no args (use cwd) or <project> <branch>")
+		return "", "", "", nil, fmt.Errorf("provide no args (cwd worktree), <branch>, or <project> <branch>")
 	}
+}
+
+// worktreeForBranch finds the linked worktree checked out on branch within the
+// given project, returning the project's main checkout and the worktree path.
+func worktreeForBranch(entry *config.ProjectEntry, branch string) (repoRoot, wtPath string, err error) {
+	worktrees, err := gitutil.ListWorktrees(entry.Path)
+	if err != nil {
+		return "", "", err
+	}
+	for _, w := range worktrees {
+		if w.Branch == branch {
+			return entry.Path, w.Path, nil
+		}
+	}
+	return "", "", fmt.Errorf("no worktree for branch %q in project %q", branch, entry.Name)
 }
 
 // printDirtyFiles writes a preview of dirty files to cmd.ErrOrStderr, truncated at
