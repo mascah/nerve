@@ -40,6 +40,23 @@ func resolveProject(name string) (*config.ProjectEntry, *config.GlobalRegistry, 
 	return entry, reg, nil
 }
 
+// resolveCwdProject resolves the registered project enclosing the current working
+// directory. It's the fallback for `new` / `remove` when the <project> arg is
+// omitted: from inside a project's main checkout (or any of its worktrees), the
+// project name is redundant, so infer it. Returns a help-tuned error when cwd
+// isn't inside a registered project.
+func resolveCwdProject() (*config.ProjectEntry, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	entry, _, _ := resolveProjectByCwd(cwd)
+	if entry == nil {
+		return nil, fmt.Errorf("cwd is not inside a registered nerve project — pass <project> explicitly, or run `nerve project add <path>`")
+	}
+	return entry, nil
+}
+
 // resolveProjectByCwd finds the project entry whose Path encloses cwd. Returns nil
 // when cwd isn't inside any registered project (caller decides how to handle).
 func resolveProjectByCwd(cwd string) (*config.ProjectEntry, *config.GlobalRegistry, error) {

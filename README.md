@@ -65,8 +65,9 @@ nerve project add ~/Code/my-app
 # Scaffold .nerve/config.yaml (interactive)
 cd ~/Code/my-app && nerve init
 
-# Create a worktree — nerve allocates ports, copies dotfiles, runs post_create hooks
-nerve new my-app feat-foo
+# Create a worktree — nerve allocates ports, copies dotfiles, runs post_create hooks.
+# From inside a registered repo the project is inferred, so the name is optional:
+nerve new feat-foo            # same as: nerve new my-app feat-foo
 
 # Inspect what was allocated
 nerve list my-app
@@ -131,8 +132,8 @@ Available template variables: `{branch}`, `{project}`, `{worktree_path}`, `{port
 |---|---|
 | `nerve init` | Scaffold `.nerve/config.yaml` interactively |
 | `nerve project add/list/remove` | Manage global project registry |
-| `nerve new <project> <branch>` | Create worktree: allocate ports, copy files, run hooks |
-| `nerve remove [<project>] [<branch>]` | Remove worktree: release port, optionally delete branch |
+| `nerve new [<project>] <branch>` | Create worktree: allocate ports, copy files, run hooks (project defaults to the one enclosing cwd) |
+| `nerve remove [<project>] [<branch>]` | Remove worktree: release port, optionally delete branch (no args → cwd worktree; `<branch>` alone → cwd's project) |
 | `nerve list [<project>]` | List active worktrees and their allocated ports |
 | `nerve env` | Print per-worktree port env vars for current directory |
 | `nerve ports list/cleanup/status` | Inspect the port registry |

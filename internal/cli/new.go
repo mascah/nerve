@@ -14,9 +14,9 @@ import (
 
 func newNewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "new <project> <branch>",
-		Short: "Create a worktree",
-		Args:  cobra.ExactArgs(2),
+		Use:   "new [<project>] <branch>",
+		Short: "Create a worktree (project defaults to the one enclosing cwd)",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE:  runNew,
 	}
 	cmd.Flags().String("from", "", "base ref for new branch (defaults to project default_base or current HEAD)")
@@ -27,9 +27,21 @@ func newNewCmd() *cobra.Command {
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
-	projectName, branch := args[0], args[1]
-
-	entry, _, err := resolveProject(projectName)
+	// Two forms: `new <branch>` (project inferred from cwd) and the explicit
+	// `new <project> <branch>`. Disambiguated purely by arg count.
+	var (
+		branch string
+		entry  *config.ProjectEntry
+		err    error
+	)
+	switch len(args) {
+	case 1:
+		branch = args[0]
+		entry, err = resolveCwdProject()
+	default: // 2 (capped by RangeArgs)
+		branch = args[1]
+		entry, _, err = resolveProject(args[0])
+	}
 	if err != nil {
 		return err
 	}
