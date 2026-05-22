@@ -89,6 +89,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "  ✓ port registry consistent (%d allocations)\n", len(regSnap.Allocations))
 		}
+
+		// Leftover trash from an interrupted background delete. Informational only —
+		// it self-heals on the next remove and isn't counted as an issue.
+		if count, bytes := trashStats(p.Path); count > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "  • %d leftover item(s) in .nerve/trash (%s) — run `nerve gc %s` to clear\n", count, humanBytes(bytes), p.Name)
+		}
 	}
 
 	// Cross-project leases: flag any entry whose worktree no longer exists on disk.

@@ -17,7 +17,7 @@ func isolateConfig(t *testing.T) {
 
 func TestAppLaunches(t *testing.T) {
 	isolateConfig(t)
-	app, err := newApp()
+	app, err := newApp("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestAppLaunches(t *testing.T) {
 
 func TestAppNavigateToAddProject(t *testing.T) {
 	isolateConfig(t)
-	app, err := newApp()
+	app, err := newApp("")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,6 +43,18 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Capture the canonical cwd + target BEFORE removal: Remove chdir's the process
+	// out of a doomed worktree, and the dir won't exist afterward to canonicalize.
+	// Used to decide whether to print the shell-recovery tip below.
+	startCanon := ""
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		startCanon, _ = gitutil.CanonicalPath(cwd)
+	}
+	wtCanon, _ := gitutil.CanonicalPath(wtPath)
+	if wtCanon == "" {
+		wtCanon = wtPath
+	}
+
 	res, err := worktree.Remove(worktree.RemoveOptions{
 		RepoRoot:     repoRoot,
 		WorktreePath: wtPath,
@@ -80,14 +92,11 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	// If the user ran `nerve remove` from inside the worktree they just removed,
 	// their shell is now sitting in a deleted directory. Subsequent commands
 	// (pyenv hooks, prompt setup, even `cd`) will spew getcwd errors until they
-	// move out. We can't change the parent shell's cwd from here, so just print
-	// a recovery hint and a copy-pasteable cd target.
-	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
-		if canon, err := gitutil.CanonicalPath(cwd); err == nil {
-			if canon == wtPath || strings.HasPrefix(canon, wtPath+string(filepath.Separator)) {
-				fmt.Fprintf(out, "\ntip: your shell is still inside the deleted worktree — run `cd %s` to recover\n", repoRoot)
-			}
-		}
+	// move out. We can't change the parent shell's cwd from here (and Remove already
+	// moved nerve's own cwd to the repo root), so just print a recovery hint with a
+	// copy-pasteable cd target, keyed off the cwd we captured before removal.
+	if startCanon != "" && (startCanon == wtCanon || strings.HasPrefix(startCanon, wtCanon+string(filepath.Separator))) {
+		fmt.Fprintf(out, "\ntip: your shell is still inside the deleted worktree — run `cd %s` to recover\n", repoRoot)
 	}
 	return nil
 }

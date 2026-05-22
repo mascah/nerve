@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mascah/nerve/internal/clone"
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/envfile"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/hookstatus"
 	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/ports"
 	"github.com/mascah/nerve/internal/registry"
@@ -101,6 +103,8 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		gitignoreEntries = append(gitignoreEntries,
 			".nerve/ports.json",
 			".nerve/*.lock",
+			".nerve/hooks/",
+			".nerve/trash/",
 			".env.local",
 		)
 	}
@@ -296,7 +300,13 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	// Run post_create hooks with the allocated ports + identity vars in their
 	// environment, so setup scripts (migrations, installers) can read them. We expose
 	// the same KEY=port / static-var pairs written to .env.local, plus a few
-	// well-known identity vars.
+	// well-known identity vars. When the project opted into background_post_create we
+	// hand them — carrying that same env — to a detached child so this call (and the
+	// WorktreeCreate hook that prints the path) returns immediately; `claude
+	// --worktree` boots without waiting on slow installs, and the child records
+	// progress under .nerve/hooks/<slug>/ for the TUI / `nerve list`. (A background
+	// hook failure can't roll back the worktree — Create has already returned — so it
+	// surfaces as a "failed" status rather than removing the worktree.)
 	if !opts.SkipHooks && len(cfg.Hooks.PostCreate) > 0 {
 		hookEnv := make(map[string]string, len(envVars)+4)
 		for k, v := range envVars {
@@ -306,9 +316,35 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		hookEnv["PROJECT"] = projectName
 		hookEnv["WORKTREE_PATH"] = worktreePath
 		hookEnv["BRANCH_SLUG"] = branchSlug
-		fmt.Fprintln(log, "running post_create hooks:")
-		if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, hookEnv, log); err != nil {
-			return res, err
+
+		if cfg.Project.BackgroundPostCreate && backgroundSupported() {
+			// Mark "running" up front so read-side surfaces reflect it the instant
+			// the path is printed, then spawn the detached runner with the hook env.
+			_ = hookstatus.Write(opts.RepoRoot, branchSlug, hookstatus.Status{
+				State:     hookstatus.StateRunning,
+				StartedAt: time.Now(),
+			})
+			if err := spawnDetachedFn(hookEnv, "run-hooks",
+				"--repo", opts.RepoRoot,
+				"--worktree", worktreePath,
+				"--branch", opts.Branch,
+			); err != nil {
+				// Couldn't detach — fall back to running synchronously rather than
+				// silently skipping the project's bootstrap.
+				fmt.Fprintf(log, "warning: could not background post_create hooks (%v); running synchronously\n", err)
+				_ = hookstatus.Clear(opts.RepoRoot, branchSlug)
+				fmt.Fprintln(log, "running post_create hooks:")
+				if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, hookEnv, log); err != nil {
+					return res, err
+				}
+			} else {
+				fmt.Fprintf(log, "post_create hooks running in background (see .nerve/hooks/%s/log)\n", branchSlug)
+			}
+		} else {
+			fmt.Fprintln(log, "running post_create hooks:")
+			if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, hookEnv, log); err != nil {
+				return res, err
+			}
 		}
 	}
 

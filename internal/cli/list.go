@@ -8,6 +8,7 @@ import (
 
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/hookstatus"
 	"github.com/mascah/nerve/internal/registry"
 )
 
@@ -30,6 +31,9 @@ type listEntry struct {
 	PrimaryPort   int            `json:"primary_port,omitempty"`
 	Offset        int            `json:"offset,omitempty"`
 	PortByService map[string]int `json:"ports,omitempty"`
+	// HookState reflects backgrounded post_create hooks: "running", "ok", or
+	// "failed". Empty for synchronous projects and worktrees with no status.
+	HookState string `json:"hook_state,omitempty"`
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -80,6 +84,13 @@ func runList(cmd *cobra.Command, args []string) error {
 					e.PrimaryPort = primary.BasePort + cfg.Project.PortOffset + a.Offset
 				}
 			}
+			if !e.IsMain && cfg != nil {
+				if slug := config.Slugify(w.Branch); slug != "" {
+					if st, found, _ := hookstatus.Read(p.Path, slug); found {
+						e.HookState = string(st.State)
+					}
+				}
+			}
 			entries = append(entries, e)
 		}
 	}
@@ -98,7 +109,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%-20s %-30s %-7s %s\n", "PROJECT", "BRANCH", "PORT", "PATH")
+	fmt.Fprintf(out, "%-20s %-30s %-7s %-9s %s\n", "PROJECT", "BRANCH", "PORT", "HOOKS", "PATH")
 	for _, e := range entries {
 		port := "-"
 		if e.PrimaryPort > 0 {
@@ -108,7 +119,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		if e.IsMain {
 			branch += " (main)"
 		}
-		fmt.Fprintf(out, "%-20s %-30s %-7s %s\n", e.Project, branch, port, e.Path)
+		hooks := e.HookState
+		if hooks == "" {
+			hooks = "-"
+		}
+		fmt.Fprintf(out, "%-20s %-30s %-7s %-9s %s\n", e.Project, branch, port, hooks, e.Path)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/gitutil"
+	"github.com/mascah/nerve/internal/hookstatus"
 	"github.com/mascah/nerve/internal/leases"
 	"github.com/mascah/nerve/internal/registry"
 )
@@ -118,10 +119,31 @@ func Remove(opts RemoveOptions) (*RemoveResult, error) {
 		fmt.Fprintf(log, "released %d global port lease(s)\n", len(released))
 	}
 
-	// Remove the git worktree.
-	fmt.Fprintf(log, "git worktree remove %s\n", opts.WorktreePath)
-	if err := gitutil.RemoveWorktree(opts.RepoRoot, opts.WorktreePath, opts.Force); err != nil {
-		return res, fmt.Errorf("git worktree remove: %w", err)
+	// Don't delete the directory we're standing in out from under ourselves — on
+	// macOS that leaves the process hung in a half-deleted tree. Move to the main
+	// checkout first. Benefits `nerve remove` and the TUI alike.
+	guardTarget := target
+	if guardTarget == "" {
+		guardTarget = opts.WorktreePath
+	}
+	chdirAwayIfInside(guardTarget, opts.RepoRoot)
+
+	// Remove the git worktree: a synchronous `git worktree remove` by default, or
+	// the rename-to-trash + detached-delete fast path when the project opted into
+	// background_remove (git metadata is still reconciled synchronously inside).
+	background := opts.Cfg != nil && opts.Cfg.Project.BackgroundRemove
+	if background {
+		fmt.Fprintf(log, "removing worktree %s (background delete)\n", opts.WorktreePath)
+	} else {
+		fmt.Fprintf(log, "git worktree remove %s\n", opts.WorktreePath)
+	}
+	if err := removeWorktreeDir(opts.RepoRoot, opts.WorktreePath, opts.Branch, opts.Force, background, log); err != nil {
+		return res, fmt.Errorf("remove worktree: %w", err)
+	}
+
+	// Drop any backgrounded post_create hook status/log for this worktree.
+	if slug := config.Slugify(opts.Branch); slug != "" {
+		_ = hookstatus.Clear(opts.RepoRoot, slug)
 	}
 
 	// Delete branch if appropriate.

@@ -16,6 +16,20 @@ type ProjectSettings struct {
 	PortOffset   int    `yaml:"port_offset"`
 	WorktreeRoot string `yaml:"worktree_root"`
 	PoolSize     int    `yaml:"pool_size"`
+	// BackgroundPostCreate, when true, runs post_create hooks in a detached child
+	// process so `nerve new` / the WorktreeCreate hook return (and `claude
+	// --worktree` boots) immediately instead of blocking on slow installs (uv
+	// sync, pnpm i). Hook progress + a terminal status are written under
+	// .nerve/hooks/<branch_slug>/. Default false: hooks run synchronously and the
+	// worktree env is guaranteed ready before the path is printed.
+	BackgroundPostCreate bool `yaml:"background_post_create,omitempty"`
+	// BackgroundRemove, when true, makes worktree teardown return immediately by
+	// renaming the worktree dir into .nerve/trash/ and deleting the bytes in a
+	// detached child (git's metadata is reconciled synchronously via prune, so its
+	// view never goes out of sync). Default false: teardown runs a synchronous
+	// `git worktree remove`, which is slower for large node_modules/.venv trees but
+	// fully complete before the command returns.
+	BackgroundRemove bool `yaml:"background_remove,omitempty"`
 }
 
 // Service is one network-bound component whose port gets offset per worktree.

@@ -130,6 +130,16 @@ func RemoveWorktree(repoDir, path string, force bool) error {
 	return err
 }
 
+// PruneWorktrees runs `git worktree prune`, which reconciles git's administrative
+// metadata by dropping entries whose working-tree directory no longer exists. It
+// is the blessed way to clean up after deleting (or moving) a worktree directory
+// out of band — git itself treats a missing worktree dir as prunable, so this is
+// self-healing: a prune that doesn't run (or fails) is reconciled by the next one.
+func PruneWorktrees(repoDir string) error {
+	_, err := runGit(repoDir, "worktree", "prune")
+	return err
+}
+
 // DeleteBranch removes a local branch. force=true uses -D, otherwise -d.
 func DeleteBranch(repoDir, branch string, force bool) error {
 	flag := "-d"
