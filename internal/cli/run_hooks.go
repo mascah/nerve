@@ -61,8 +61,15 @@ func runRunHooks(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if cfg == nil || len(cfg.Hooks.PostCreate) == 0 {
-		// Nothing to run (e.g. config changed since spawn) — record success.
+	// Only the background subset runs here — Create already ran the foreground hooks
+	// synchronously before spawning this child.
+	var bg []string
+	if cfg != nil {
+		bg = cfg.Hooks.PostCreate.BackgroundStrings(cfg.Project.BackgroundPostCreate)
+	}
+	if len(bg) == 0 {
+		// Nothing to background (config changed since spawn, or all hooks foreground)
+		// — record success.
 		return hookstatus.Write(repo, slug, hookstatus.Status{
 			State:      hookstatus.StateOK,
 			PID:        pid,
@@ -78,9 +85,9 @@ func runRunHooks(cmd *cobra.Command, _ []string) error {
 	defer logf.Close()
 
 	// The detached child already inherited the post_create hook env (ports + identity
-	// vars) from the spawn in worktree.Create, so pass nil extraEnv here — RunHooks
-	// picks it up from os.Environ().
-	runErr := worktree.RunHooks(wt, cfg.Hooks.PostCreate, nil, logf)
+	// vars) from the spawn in worktree.Create, so pass nil extraEnv here —
+	// RunHooksParallel picks it up from os.Environ(). Background hooks run concurrently.
+	runErr := worktree.RunHooksParallel(wt, bg, nil, logf)
 
 	st := hookstatus.Status{PID: pid, StartedAt: start, FinishedAt: time.Now()}
 	if runErr != nil {
