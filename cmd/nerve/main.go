@@ -8,8 +8,15 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run executes the root command and returns the appropriate exit code.
+// A nil error → 0; an exitCodeError → its Code; any other error → 1 (ExitUsage).
+func run() int {
 	if err := cli.NewRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "nerve:", err)
-		os.Exit(1)
+		return cli.ExitCode(err)
 	}
+	return cli.ExitOK
 }

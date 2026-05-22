@@ -60,7 +60,7 @@ func TestRemoveWorktreeDir_BackgroundRenamesAndPrunes(t *testing.T) {
 
 	var gotArgs []string
 	orig := spawnDetachedFn
-	spawnDetachedFn = func(args ...string) error { gotArgs = args; return nil }
+	spawnDetachedFn = func(_ map[string]string, args ...string) error { gotArgs = args; return nil }
 	defer func() { spawnDetachedFn = orig }()
 
 	if err := removeWorktreeDir(repo, wtPath, "feature", true, true, io.Discard); err != nil {
@@ -98,7 +98,7 @@ func TestRemoveWorktreeDir_SyncPath(t *testing.T) {
 
 	called := false
 	orig := spawnDetachedFn
-	spawnDetachedFn = func(args ...string) error { called = true; return nil }
+	spawnDetachedFn = func(_ map[string]string, _ ...string) error { called = true; return nil }
 	defer func() { spawnDetachedFn = orig }()
 
 	if err := removeWorktreeDir(repo, wtPath, "feature", true, false, io.Discard); err != nil {

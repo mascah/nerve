@@ -67,6 +67,13 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	if branchSlug == "" {
 		return nil, fmt.Errorf("branch %q has no alphanumeric characters to form a branch_slug", opts.Branch)
 	}
+	// Reject branch names with ".." path segments. The branch is interpolated into
+	// the on-disk worktree path via the {branch} template var, so a name like
+	// "../../escape" would otherwise place the worktree outside the repo. (Such
+	// names are also invalid as git refs.)
+	if hasDotDotSegment(opts.Branch) {
+		return nil, fmt.Errorf("branch %q contains a %q path segment", opts.Branch, "..")
+	}
 	rel := config.RenderPath(tmpl, map[string]string{
 		"branch":      opts.Branch,
 		"project":     projectName,
@@ -75,6 +82,12 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	worktreePath := rel
 	if !filepath.IsAbs(worktreePath) {
 		worktreePath = filepath.Join(opts.RepoRoot, rel)
+	}
+	// Defense in depth: for the common repo-relative worktree_root, ensure the
+	// rendered path didn't escape the repository. Absolute templates are an explicit
+	// opt-out (the user pointed worktree_root outside the repo on purpose).
+	if !filepath.IsAbs(rel) && !isInsideRepo(opts.RepoRoot, worktreePath) {
+		return nil, fmt.Errorf("worktree path %q escapes repository root %q", worktreePath, opts.RepoRoot)
 	}
 
 	// Always make sure .worktrees/ is gitignored when we're placing worktrees inside
@@ -201,6 +214,28 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 			return nil, fmt.Errorf("port lease: %w", reserveErr)
 		}
 	}
+
+	// From here on we hold a registry allocation and (when leasesStore != nil) a
+	// global lease. Any failure in the remaining setup steps — clone, templates,
+	// vars, .env.local, post_create hooks — must release BOTH and remove the git
+	// worktree, otherwise we leak a half-initialized worktree plus its port claims
+	// (a failing post_create hook is the common case). committed is flipped true
+	// only on the successful return at the end of the function.
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if leasesStore != nil {
+			_, _ = leasesStore.Release(worktreePath)
+		}
+		_ = handle.With(func(reg *registry.Registry) error {
+			reg.ReleaseByWorktreePath(worktreePath)
+			return nil
+		})
+		_ = gitutil.RemoveWorktree(opts.RepoRoot, worktreePath, true)
+	}()
+
 	res.Offset = allocation.Offset
 	res.PrimaryPort = allocation.PrimaryPort
 	res.PortByService = allocation.PortByService
@@ -262,20 +297,34 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	}
 	fmt.Fprintf(log, "wrote %s\n", envPath)
 
-	// Run post_create hooks. When the project opted into background_post_create we
-	// hand them to a detached child so this call (and the WorktreeCreate hook that
-	// prints the path) returns immediately — `claude --worktree` boots without
-	// waiting on slow installs. The child records progress under
-	// .nerve/hooks/<slug>/ so the TUI / `nerve list` can show when it finishes.
+	// Run post_create hooks with the allocated ports + identity vars in their
+	// environment, so setup scripts (migrations, installers) can read them. We expose
+	// the same KEY=port / static-var pairs written to .env.local, plus a few
+	// well-known identity vars. When the project opted into background_post_create we
+	// hand them — carrying that same env — to a detached child so this call (and the
+	// WorktreeCreate hook that prints the path) returns immediately; `claude
+	// --worktree` boots without waiting on slow installs, and the child records
+	// progress under .nerve/hooks/<slug>/ for the TUI / `nerve list`. (A background
+	// hook failure can't roll back the worktree — Create has already returned — so it
+	// surfaces as a "failed" status rather than removing the worktree.)
 	if !opts.SkipHooks && len(cfg.Hooks.PostCreate) > 0 {
+		hookEnv := make(map[string]string, len(envVars)+4)
+		for k, v := range envVars {
+			hookEnv[k] = v
+		}
+		hookEnv["BRANCH"] = opts.Branch
+		hookEnv["PROJECT"] = projectName
+		hookEnv["WORKTREE_PATH"] = worktreePath
+		hookEnv["BRANCH_SLUG"] = branchSlug
+
 		if cfg.Project.BackgroundPostCreate && backgroundSupported() {
 			// Mark "running" up front so read-side surfaces reflect it the instant
-			// the path is printed, then spawn the detached runner.
+			// the path is printed, then spawn the detached runner with the hook env.
 			_ = hookstatus.Write(opts.RepoRoot, branchSlug, hookstatus.Status{
 				State:     hookstatus.StateRunning,
 				StartedAt: time.Now(),
 			})
-			if err := spawnDetachedFn("run-hooks",
+			if err := spawnDetachedFn(hookEnv, "run-hooks",
 				"--repo", opts.RepoRoot,
 				"--worktree", worktreePath,
 				"--branch", opts.Branch,
@@ -285,7 +334,7 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 				fmt.Fprintf(log, "warning: could not background post_create hooks (%v); running synchronously\n", err)
 				_ = hookstatus.Clear(opts.RepoRoot, branchSlug)
 				fmt.Fprintln(log, "running post_create hooks:")
-				if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, log); err != nil {
+				if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, hookEnv, log); err != nil {
 					return res, err
 				}
 			} else {
@@ -293,13 +342,14 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 			}
 		} else {
 			fmt.Fprintln(log, "running post_create hooks:")
-			if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, log); err != nil {
+			if err := RunHooks(worktreePath, cfg.Hooks.PostCreate, hookEnv, log); err != nil {
 				return res, err
 			}
 		}
 	}
 
 	fmt.Fprintf(log, "worktree ready at %s (offset %d, primary port %d)\n", worktreePath, allocation.Offset, allocation.PrimaryPort)
+	committed = true
 	return res, nil
 }
 
@@ -314,6 +364,17 @@ func isInsideRepo(repoRoot, target string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// hasDotDotSegment reports whether name contains a ".." path segment when split on
+// "/". Used to reject branch names that would traverse out of the worktree root.
+func hasDotDotSegment(name string) bool {
+	for _, seg := range strings.Split(name, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func discardIfNil(w io.Writer) io.Writer {

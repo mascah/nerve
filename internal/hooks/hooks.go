@@ -2,7 +2,7 @@
 // Claude Code's lifecycle hooks to nerve.
 //
 // The merge strategy is conservative: any user-written hooks in the same event
-// arrays are preserved; nerve's own entries are tagged with a sentinel ("nerve")
+// arrays are preserved; nerve's own entries are tagged with a sentinel ("# nerve-managed")
 // in their command string so Uninstall can find and remove only its own entries.
 package hooks
 

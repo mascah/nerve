@@ -5,7 +5,7 @@ package worktree
 import "fmt"
 
 // spawnDetached is unsupported off unix; callers fall back to running synchronously.
-func spawnDetached(args ...string) error {
+func spawnDetached(_ map[string]string, args ...string) error {
 	return fmt.Errorf("background execution is not supported on this platform")
 }
 

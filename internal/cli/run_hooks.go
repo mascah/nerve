@@ -77,7 +77,10 @@ func runRunHooks(cmd *cobra.Command, _ []string) error {
 	}
 	defer logf.Close()
 
-	runErr := worktree.RunHooks(wt, cfg.Hooks.PostCreate, logf)
+	// The detached child already inherited the post_create hook env (ports + identity
+	// vars) from the spawn in worktree.Create, so pass nil extraEnv here — RunHooks
+	// picks it up from os.Environ().
+	runErr := worktree.RunHooks(wt, cfg.Hooks.PostCreate, nil, logf)
 
 	st := hookstatus.Status{PID: pid, StartedAt: start, FinishedAt: time.Now()}
 	if runErr != nil {

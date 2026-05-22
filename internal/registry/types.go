@@ -7,11 +7,17 @@ import "time"
 
 // Registry is the persisted state of which ports are allocated to which worktrees.
 type Registry struct {
-	Version     int                       `json:"version"`
-	Project     string                    `json:"project,omitempty"`
-	Pool        Pool                      `json:"pool"`
-	Allocations map[string]Allocation     `json:"allocations"`
+	Version     int                   `json:"version"`
+	Project     string                `json:"project,omitempty"`
+	Pool        Pool                  `json:"pool"`
+	Allocations map[string]Allocation `json:"allocations"`
 }
+
+// SchemaVersion implements jsonstore.Document.
+func (r *Registry) SchemaVersion() int { return r.Version }
+
+// SetSchemaVersion implements jsonstore.Document.
+func (r *Registry) SetSchemaVersion(v int) { r.Version = v }
 
 // Pool is the half-open port range [Start, End). Pool.End - Pool.Start is the pool size.
 type Pool struct {

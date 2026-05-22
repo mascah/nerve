@@ -58,7 +58,7 @@ func removeWorktreeDir(repoRoot, worktreePath, branch string, force, background 
 
 	// Delete the trashed bytes detached so we return immediately. gc-trash empties
 	// the whole trash dir, also sweeping leftovers from any prior crashed delete.
-	if err := spawnDetachedFn("gc-trash", "--repo", repoRoot); err != nil {
+	if err := spawnDetachedFn(nil, "gc-trash", "--repo", repoRoot); err != nil {
 		fmt.Fprintf(log, "warning: could not background trash delete (%v); deleting inline\n", err)
 		_ = os.RemoveAll(dest)
 	}
