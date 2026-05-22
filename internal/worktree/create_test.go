@@ -43,8 +43,12 @@ func initRepo(t *testing.T) string {
 }
 
 // configWithService returns a minimal configured ProjectConfig with one primary
-// service and the given post_create hook commands.
+// service and the given post_create hook commands (all foreground).
 func configWithService(postCreate ...string) *config.ProjectConfig {
+	hooks := make(config.HookCommands, len(postCreate))
+	for i, c := range postCreate {
+		hooks[i] = config.Hook(c)
+	}
 	return &config.ProjectConfig{
 		Version: 1,
 		Project: config.ProjectSettings{
@@ -54,7 +58,7 @@ func configWithService(postCreate ...string) *config.ProjectConfig {
 		Services: []config.Service{
 			{ID: "django", BasePort: 8000, EnvKey: "DJANGO_PORT", Primary: true},
 		},
-		Hooks: config.LifecycleHooks{PostCreate: postCreate},
+		Hooks: config.LifecycleHooks{PostCreate: hooks},
 	}
 }
 

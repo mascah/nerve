@@ -16,12 +16,13 @@ type ProjectSettings struct {
 	PortOffset   int    `yaml:"port_offset"`
 	WorktreeRoot string `yaml:"worktree_root"`
 	PoolSize     int    `yaml:"pool_size"`
-	// BackgroundPostCreate, when true, runs post_create hooks in a detached child
-	// process so `nerve new` / the WorktreeCreate hook return (and `claude
-	// --worktree` boots) immediately instead of blocking on slow installs (uv
-	// sync, pnpm i). Hook progress + a terminal status are written under
-	// .nerve/hooks/<branch_slug>/. Default false: hooks run synchronously and the
-	// worktree env is guaranteed ready before the path is printed.
+	// BackgroundPostCreate is the DEPRECATED project-wide background switch. It is
+	// still honored as the fallback default for post_create commands that don't set
+	// their own `background:` — when true, such commands run in the background.
+	// Prefer per-command control instead (HookCommand.Background): leave env-shapers
+	// like `direnv allow` foreground (the default) and tag slow, independent installs
+	// with `background: true`. Background hooks run detached and concurrently; their
+	// progress + a terminal status are written under .nerve/hooks/<branch_slug>/.
 	BackgroundPostCreate bool `yaml:"background_post_create,omitempty"`
 	// BackgroundRemove, when true, makes worktree teardown return immediately by
 	// renaming the worktree dir into .nerve/trash/ and deleting the bytes in a
@@ -69,9 +70,12 @@ type Template struct {
 }
 
 // LifecycleHooks are nerve's own pre/post worktree hooks (distinct from Claude Code hooks).
+// PostCreate entries support the per-command background form (see HookCommand);
+// PreRemove always runs synchronously (it gates a destructive teardown), so it stays
+// a plain string list.
 type LifecycleHooks struct {
-	PostCreate []string `yaml:"post_create,omitempty"`
-	PreRemove  []string `yaml:"pre_remove,omitempty"`
+	PostCreate HookCommands `yaml:"post_create,omitempty"`
+	PreRemove  []string     `yaml:"pre_remove,omitempty"`
 }
 
 // GlobalRegistry is the user-wide project list at ~/.config/nerve/projects.yaml.

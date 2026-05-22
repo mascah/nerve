@@ -161,15 +161,31 @@ After install, `claude --worktree feat-foo` creates the worktree at `<repo>/.wor
 
 #### Fast boot & teardown (opt-in)
 
-For large projects, `post_create` installs (`uv sync`, `pnpm i`) and the recursive delete of `node_modules`/`.venv` on teardown can each take 30+ seconds, and `claude --worktree` blocks on them. Two per-project flags move that work off the critical path. Both default to `false` (fully synchronous — the env is guaranteed ready before the path is printed, and teardown is complete when the command returns); enable them per project under `project:` in `.nerve/config.yaml`:
+For large projects, `post_create` installs (`uv sync`, `pnpm i`) and the recursive delete of `node_modules`/`.venv` on teardown can each take 30+ seconds, and `claude --worktree` blocks on them. You can move that work off the critical path per command and per project.
+
+**Per-command background hooks.** By default every `post_create` hook is **foreground**: it runs synchronously, in order, before the worktree path is reported — so env-shapers like `direnv allow` are in effect before a session starts. Tag a hook with `background: true` to detach it; multiple background hooks run **concurrently**:
+
+```yaml
+hooks:
+  post_create:
+    - direnv allow            # foreground: runs first, blocks boot (correct for env-shapers)
+    - run: uv sync
+      background: true        # detached
+    - run: pnpm install
+      background: true        # detached → runs in parallel with uv sync
+```
+
+Background hooks run with the allocated ports + identity vars in their environment (same as the synchronous path). Progress and a terminal `running`/`ok`/`failed` status are written under `.nerve/hooks/<branch_slug>/`; `nerve list` and the TUI Worktrees tab show a `HOOKS` column so you can tell when bootstrap finished. A failing background hook is recorded as `failed` (it can't roll back an already-created worktree); a failing foreground hook aborts create and rolls the worktree back. Note the trade-off: an agent could start a dev server before a background `pnpm i` has finished — keep such prerequisites foreground.
+
+> The project-wide `project.background_post_create: true` flag is **deprecated** but still honored as a fallback default for hooks that don't set their own `background:`. Prefer the per-command form above.
+
+**Background teardown** is a separate per-project flag (default `false`):
 
 ```yaml
 project:
-  background_post_create: true   # print the worktree path immediately; run post_create hooks in a detached process
-  background_remove: true         # return from teardown immediately; trash + delete the worktree dir in the background
+  background_remove: true   # return from teardown immediately; trash + delete the worktree dir in the background
 ```
 
-- **`background_post_create`** — `claude --worktree` boots right away while hooks run detached (with the allocated ports + identity vars in their environment, same as the synchronous path). Progress and a terminal `running`/`ok`/`failed` status are written under `.nerve/hooks/<branch_slug>/`; `nerve list` and the TUI Worktrees tab show a `HOOKS` column so you can tell when bootstrap finished. Note the trade-off: an agent could start a dev server before `pnpm i` has finished — leave this off for projects where that bites.
 - **`background_remove`** — teardown renames the worktree into `.nerve/trash/` (instant) and deletes the bytes in a detached process. git's own metadata is reconciled *synchronously* (`git worktree prune`), so its view never goes out of sync even if the background delete is interrupted; leftovers are swept on the next remove. Falls back to a synchronous delete if the worktree lives on a different filesystem than `.nerve/`. If a detached delete is ever interrupted, `nerve doctor` reports the leftover bytes and `nerve gc` clears them on demand.
 
 #### Install scope

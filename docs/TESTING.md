@@ -238,30 +238,36 @@ hooks:
 
 ### Backgrounded post_create + teardown (opt-in)
 
-By default hooks run synchronously and `nerve new` blocks until they finish. Set the two opt-in flags under `project:` to move that work off the critical path:
+By default every `post_create` hook runs **foreground**: synchronously, in declared order, and `nerve new` blocks until they finish — so env-shaping hooks like `direnv allow` have taken effect before a session starts. Tag an individual hook with `background: true` to move that one command off the critical path. Background hooks run **detached and concurrently** with each other (and with `claude --worktree` booting):
 
 ```yaml
-project:
-    background_post_create: true
-    background_remove: true
 hooks:
     post_create:
-        - "sleep 5 && echo done > bootstrap.marker"   # stand-in for a slow install
+        - direnv allow                                 # foreground: runs first, blocks boot
+        - run: "sleep 5 && echo uv > uv.marker"        # background: detached
+          background: true
+        - run: "sleep 5 && echo pnpm > pnpm.marker"    # background: runs ‖ the one above
+          background: true
+project:
+    background_remove: true
 ```
 
-Backgrounded create returns immediately and reports it:
+> The older project-wide `project.background_post_create: true` still works as a deprecated default (it backgrounds any hook that doesn't set its own `background:`), but prefer per-command control: leave prerequisites foreground and tag only the slow, independent installs.
+
+Create runs the foreground hooks, then returns immediately and reports the background handoff:
 ```bash
 nerve -v new demo feat-bg
 # ...
+# running post_create hooks:          # the foreground ones (e.g. direnv allow)
 # post_create hooks running in background (see .nerve/hooks/feat_bg/log)
 # Summary table prints right away — note branch_slug "feat_bg"
 
 nerve list demo                    # HOOKS column shows "running", then "ok" after ~5s
 cat "$SANDBOX/demo/.nerve/hooks/feat_bg/status.json"   # {"state":"running"...} → {"state":"ok"...}
-cat "$SANDBOX/demo/.nerve/hooks/feat_bg/log"           # the hook output
-ls "$SANDBOX/demo/.worktrees/feat-bg/bootstrap.marker" # appears once hooks finish
+cat "$SANDBOX/demo/.nerve/hooks/feat_bg/log"           # both background hooks' output
+ls "$SANDBOX/demo/.worktrees/feat-bg/"*.marker         # uv.marker + pnpm.marker appear together (~5s, not ~10s)
 ```
-A failing hook (`exit 1`) lands `{"state":"failed","exit_code":1,"failed_command":...}` and `nerve list` shows `failed`.
+Because the two background hooks run concurrently, both markers appear after ~5s, not ~10s. A failing background hook (`exit 1`) lands `{"state":"failed","exit_code":1,"failed_command":...}` and `nerve list` shows `failed`; the other background hooks still run to completion. A failing **foreground** hook instead aborts create and rolls the worktree back (no port leak), exactly as before.
 
 Backgrounded remove returns instantly; git's view is reconciled synchronously so there's no phantom worktree:
 ```bash
