@@ -31,6 +31,14 @@ type ProjectSettings struct {
 	// `git worktree remove`, which is slower for large node_modules/.venv trees but
 	// fully complete before the command returns.
 	BackgroundRemove bool `yaml:"background_remove,omitempty"`
+	// BashPreamble, when set, is the shell snippet `nerve bash-preamble` prepends to
+	// each Bash-tool command run inside a registered worktree (the PreToolUse:Bash hook,
+	// installed opt-in via `nerve hooks install --bash-preamble`). It exists to re-load
+	// the worktree's env after Claude's EnterWorktree tool, which fires no env-injecting
+	// hook (see docs/claude-code-worktree-env.md). Empty (default) → nerve prepends its
+	// own `export KEY=VALUE` port lines, computed in-hook. Set it to e.g.
+	// `eval "$(direnv export bash 2>/dev/null)"` to delegate the env load to direnv.
+	BashPreamble string `yaml:"bash_preamble,omitempty"`
 }
 
 // Service is one network-bound component whose port gets offset per worktree.

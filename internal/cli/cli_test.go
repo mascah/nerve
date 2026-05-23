@@ -66,8 +66,8 @@ func TestNewRootCmd_HiddenHookCommands(t *testing.T) {
 		names[sub.Name()] = sub
 	}
 
-	// worktree-create and worktree-remove must exist but be hidden.
-	for _, name := range []string{"worktree-create", "worktree-remove"} {
+	// worktree-create, worktree-remove, and bash-preamble must exist but be hidden.
+	for _, name := range []string{"worktree-create", "worktree-remove", "bash-preamble"} {
 		sub, ok := names[name]
 		if !ok {
 			t.Errorf("expected hidden command %q to be registered", name)
