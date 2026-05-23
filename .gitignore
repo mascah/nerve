@@ -6,3 +6,9 @@
 .idea/
 .vscode/
 .claude/worktrees
+# Added by nerve
+.worktrees/
+.nerve/ports.json
+.nerve/*.lock
+# Added by nerve
+.claude/settings.local.json

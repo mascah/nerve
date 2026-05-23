@@ -1,0 +1,5 @@
+version: 1
+project:
+    port_offset: 0
+    worktree_root: .worktrees/{branch}
+    pool_size: 10
