@@ -160,6 +160,8 @@ Available template variables: `{branch}`, `{project}`, `{worktree_path}`, `{port
 
 After install, `claude --worktree feat-foo` creates the worktree at `<repo>/.worktrees/feat-foo/` (instead of Claude's default `<repo>/.claude/worktrees/`), with ports allocated and env vars live in the session.
 
+> **Known limitation — `EnterWorktree` (mid-session) vs. `--worktree` (launch).** Env injection works on launch (`claude --worktree`). But when Claude creates a worktree *mid-session* via the `EnterWorktree` tool, Claude Code fires only `WorktreeCreate` (not `CwdChanged`/`SessionStart`), and `WorktreeCreate` doesn't receive `$CLAUDE_ENV_FILE` — so the worktree's env isn't loaded into the session. See [docs/claude-code-worktree-env.md](docs/claude-code-worktree-env.md) for the root cause, the approaches that don't work, and the `PreToolUse` workaround.
+
 #### Fast boot & teardown (opt-in)
 
 For large projects, `post_create` installs (`uv sync`, `pnpm i`) and the recursive delete of `node_modules`/`.venv` on teardown can each take 30+ seconds, and `claude --worktree` blocks on them. You can move that work off the critical path per command and per project.
