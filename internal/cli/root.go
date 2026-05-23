@@ -40,6 +40,7 @@ func NewRootCmd() *cobra.Command {
 		newHooksCmd(),
 		newWorktreeCreateCmd(),
 		newWorktreeRemoveCmd(),
+		newBashPreambleCmd(),
 		newRunHooksCmd(),
 		newGCTrashCmd(),
 		newGCCmd(),

@@ -24,7 +24,11 @@ type singleHook struct {
 }
 
 type hookGroup struct {
-	Hooks []singleHook `json:"hooks"`
+	// Matcher scopes a group to a tool (e.g. "Bash" for PreToolUse). omitempty keeps
+	// the matcher-less lifecycle events (WorktreeCreate, SessionStart, …) serializing
+	// exactly as before.
+	Matcher string       `json:"matcher,omitempty"`
+	Hooks   []singleHook `json:"hooks"`
 }
 
 // SettingsSnippet is the structure nerve produces; matches Claude Code's hook config shape.
@@ -32,12 +36,14 @@ type SettingsSnippet struct {
 	Hooks map[string][]hookGroup `json:"hooks"`
 }
 
-// Snippet returns the canonical nerve hook entries.
-func Snippet() SettingsSnippet {
+// Snippet returns the canonical nerve hook entries. When bashPreamble is true it also
+// includes the opt-in PreToolUse:Bash hook (`nerve bash-preamble`), which rewrites Bash
+// commands to load the worktree env after Claude's EnterWorktree tool.
+func Snippet(bashPreamble bool) SettingsSnippet {
 	cmd := func(sub string) singleHook {
 		return singleHook{Type: "command", Command: fmt.Sprintf("nerve %s %s", sub, sentinel)}
 	}
-	return SettingsSnippet{
+	s := SettingsSnippet{
 		Hooks: map[string][]hookGroup{
 			"WorktreeCreate": {{Hooks: []singleHook{cmd("worktree-create")}}},
 			"WorktreeRemove": {{Hooks: []singleHook{cmd("worktree-remove --from-hook")}}},
@@ -45,17 +51,22 @@ func Snippet() SettingsSnippet {
 			"CwdChanged":     {{Hooks: []singleHook{cmd("env --inject")}}},
 		},
 	}
+	if bashPreamble {
+		s.Hooks["PreToolUse"] = []hookGroup{{Matcher: "Bash", Hooks: []singleHook{cmd("bash-preamble")}}}
+	}
+	return s
 }
 
 // Install reads the existing settings.json at path (if present), merges in nerve's
-// hook entries (idempotently), and returns the merged JSON as a string.
-func Install(path string) (string, error) {
+// hook entries (idempotently), and returns the merged JSON as a string. When
+// bashPreamble is true the opt-in PreToolUse:Bash hook is included.
+func Install(path string, bashPreamble bool) (string, error) {
 	doc, err := loadJSON(path)
 	if err != nil {
 		return "", err
 	}
 	hooks := ensureHooksMap(doc)
-	for event, groups := range Snippet().Hooks {
+	for event, groups := range Snippet(bashPreamble).Hooks {
 		hooks[event] = mergeEvent(asGroupSlice(hooks[event]), groups)
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -87,7 +98,7 @@ func Uninstall(path string) (string, bool, error) {
 				}
 			}
 			if len(keep) > 0 {
-				cleaned = append(cleaned, hookGroup{Hooks: keep})
+				cleaned = append(cleaned, hookGroup{Matcher: g.Matcher, Hooks: keep})
 			}
 		}
 		if len(cleaned) == 0 {
@@ -120,7 +131,7 @@ func mergeEvent(existing, incoming []hookGroup) []hookGroup {
 			}
 		}
 		if len(keep) > 0 {
-			cleaned = append(cleaned, hookGroup{Hooks: keep})
+			cleaned = append(cleaned, hookGroup{Matcher: g.Matcher, Hooks: keep})
 		}
 	}
 	return append(cleaned, incoming...)

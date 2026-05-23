@@ -25,6 +25,7 @@ func newHooksCmd() *cobra.Command {
 	installCmd.Flags().Bool("project", false, "write to <repo>/.claude/settings.local.json (default; user-local, not committed)")
 	installCmd.Flags().Bool("shared", false, "write to <repo>/.claude/settings.json instead of settings.local.json (commits hooks so every collaborator must have nerve installed)")
 	installCmd.Flags().Bool("dry-run", false, "print the merged file without writing")
+	installCmd.Flags().Bool("bash-preamble", false, "also install the PreToolUse:Bash hook (`nerve bash-preamble`) that re-loads the worktree env after Claude's EnterWorktree tool — see docs/claude-code-worktree-env.md")
 
 	uninstallCmd := &cobra.Command{Use: "uninstall", Short: "Remove nerve hooks", RunE: runHooksUninstall}
 	uninstallCmd.Flags().Bool("user", false, "operate on ~/.claude/settings.json")
@@ -32,6 +33,7 @@ func newHooksCmd() *cobra.Command {
 	uninstallCmd.Flags().Bool("shared", false, "operate on <repo>/.claude/settings.json")
 
 	showCmd := &cobra.Command{Use: "show", Short: "Print the hook config nerve would write", RunE: runHooksShow}
+	showCmd.Flags().Bool("bash-preamble", false, "include the opt-in PreToolUse:Bash hook in the output")
 
 	cmd.AddCommand(installCmd, uninstallCmd, showCmd)
 	return cmd
@@ -43,7 +45,8 @@ func runHooksInstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	merged, err := hooks.Install(target)
+	bashPreamble, _ := cmd.Flags().GetBool("bash-preamble")
+	merged, err := hooks.Install(target, bashPreamble)
 	if err != nil {
 		return err
 	}
@@ -117,7 +120,8 @@ func runHooksUninstall(cmd *cobra.Command, _ []string) error {
 }
 
 func runHooksShow(cmd *cobra.Command, _ []string) error {
-	out := hooks.Snippet()
+	bashPreamble, _ := cmd.Flags().GetBool("bash-preamble")
+	out := hooks.Snippet(bashPreamble)
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err

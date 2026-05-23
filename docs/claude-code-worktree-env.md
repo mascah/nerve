@@ -66,34 +66,58 @@ workaround below.
   glob the directory. The channel is open only to hooks Claude itself invokes with `CLAUDE_ENV_FILE`.
   (Note: the var is `CLAUDE_CODE_SESSION_ID`, not `CLAUDE_SESSION_ID`/`CLAUDE_HOME`.)
 
-## Current workaround: `PreToolUse:Bash` command rewrite
+## Workaround: `nerve bash-preamble` (`PreToolUse:Bash` command rewrite)
 
 A `PreToolUse` hook matched to `Bash` rewrites the pending command via the documented
 `hookSpecificOutput.updatedInput.command`, prepending a per-command env load. Because every Bash
 command then self-loads the env from its own cwd, commands run after `EnterWorktree` (cwd = worktree)
 are correct — no `CwdChanged`, no `CLAUDE_ENV_FILE`, no agent cooperation required.
 
+This is implemented as `nerve bash-preamble` and installed **opt-in**:
+
+```bash
+nerve hooks install --bash-preamble
+```
+
+which adds:
+
 ```jsonc
 "PreToolUse": [
   { "matcher": "Bash",
-    "hooks": [{ "type": "command", "command": "nerve bash-preamble" }] }
+    "hooks": [{ "type": "command", "command": "nerve bash-preamble # nerve-managed" }] }
 ]
 ```
 
-Sketch of the hook: read stdin JSON, take `.tool_input.command`; if `.cwd` is a registered nerve
-worktree, emit JSON setting `updatedInput.command` to `<env-load>\n<original command>`. The env-load
-can be `eval "$(direnv export bash 2>/dev/null)"` (covers both the nerve ports written to
-`.env.local` and the composed `DATABASE_URL`/`VIRTUAL_ENV`), or nerve's own `nerve env --shell`.
+How it works: the command reads the hook stdin JSON, takes `.cwd` and `.tool_input.command`; if
+`.cwd` is a registered + configured nerve worktree with an allocation it emits JSON setting
+`updatedInput.command` to `<env-load>\n<original command>`. Outside a registered worktree it prints
+nothing and exits 0, so main-checkout and unregistered-repo commands are untouched. It deliberately
+emits **only** `updatedInput` (no `permissionDecision`) — this avoids both the historical
+"`updatedInput` dropped when `permissionDecision: allow`" bug and auto-approving every Bash command.
 
-Trade-offs: runs on every Bash command (direnv is mtime-cached, so cheap when unchanged); keep it a
-no-op outside registered worktrees so main-checkout commands are untouched; don't stack multiple
-Bash-rewriting `PreToolUse` hooks ("last to finish wins" for `updatedInput`); the rewritten command
-is what appears in the transcript.
+The `<env-load>` is governed by the per-project `project.bash_preamble` field in `.nerve/config.yaml`:
 
-> Not yet implemented as `nerve bash-preamble`. Until then, the manual stopgap is: after
-> `EnterWorktree`, `cd` into a **subdirectory** of the worktree (a round-trip back to the worktree
-> root is a net-zero cwd change and fires nothing). That triggers `CwdChanged`, which runs the
-> existing `nerve env --inject` + direnv hooks with the correct cwd.
+- **Unset (default):** nerve prepends its own computed `export KEY=VALUE` port lines (the same vars
+  as `nerve env --shell`), evaluated in-process — no nested `nerve`/`git` subprocess per command.
+- **Set:** nerve prepends the value verbatim. Use `eval "$(direnv export bash 2>/dev/null)"` to
+  delegate the load to direnv, which (if your `.envrc` does `dotenv_if_exists .env.local`) re-exports
+  the nerve ports **and** composed vars like `DATABASE_URL`/`VIRTUAL_ENV` in one shot:
+
+  ```yaml
+  project:
+    bash_preamble: eval "$(direnv export bash 2>/dev/null)"
+  ```
+
+Trade-offs: runs on every Bash command (direnv is mtime-cached, so cheap when unchanged); **don't
+stack multiple Bash-rewriting `PreToolUse` hooks** — Claude Code honors only one `updatedInput`
+("last to finish wins"), so if another tool (e.g. a direnv plugin) also rewrites Bash, one of them is
+silently dropped. That's why this hook is opt-in: pick exactly one Bash rewriter. The rewritten
+command is what executes.
+
+> Manual stopgap (no hook needed): after `EnterWorktree`, `cd` into a **subdirectory** of the
+> worktree (a round-trip back to the worktree root is a net-zero cwd change and fires nothing). That
+> triggers `CwdChanged`, which runs the existing `nerve env --inject` + direnv hooks with the correct
+> cwd.
 
 ## Proper fix (upstream, to file)
 

@@ -33,35 +33,46 @@ func Compute(dir string) (map[string]string, error) {
 // is returned). Intended for `nerve env --inject --verbose` diagnostics; callers
 // that want the silent-no-op contract should keep using Compute.
 func ComputeVerbose(dir string) (map[string]string, string, error) {
+	vars, _, reason, err := ComputeWithConfig(dir)
+	return vars, reason, err
+}
+
+// ComputeWithConfig is the core of Compute/ComputeVerbose: it returns the worktree's
+// env vars along with the loaded project config, so callers that also need a config
+// field (e.g. `nerve bash-preamble` reading project.bash_preamble) get both from a
+// single git discovery + registry read. The reason string mirrors ComputeVerbose. The
+// returned config is non-nil whenever vars is non-empty; for the silent-no-op cases it
+// may be nil (e.g. not a git repo, no .nerve/config.yaml).
+func ComputeWithConfig(dir string) (map[string]string, *config.ProjectConfig, string, error) {
 	info, err := gitutil.Discover(dir)
 	if err != nil {
-		return nil, "not a git repo", nil
+		return nil, nil, "not a git repo", nil
 	}
 	cfg, err := config.LoadProjectConfig(info.MainCheckout)
 	if err != nil {
 		if err == config.ErrNotFound {
-			return nil, "no .nerve/config.yaml in main checkout " + info.MainCheckout, nil
+			return nil, nil, "no .nerve/config.yaml in main checkout " + info.MainCheckout, nil
 		}
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	if !cfg.IsConfigured() {
-		return nil, "project has no services configured", nil
+		return nil, cfg, "project has no services configured", nil
 	}
 	if !info.IsWorktree {
-		return nil, "cwd is the main checkout", nil
+		return nil, cfg, "cwd is the main checkout", nil
 	}
 
 	handle := registry.Open(info.MainCheckout)
 	wt, err := gitutil.CanonicalPath(info.CurrentWorktree)
 	if err != nil {
-		return nil, "", err
+		return nil, cfg, "", err
 	}
 	_, alloc, found, err := handle.FindByWorktreePath(wt)
 	if err != nil {
-		return nil, "", err
+		return nil, cfg, "", err
 	}
 	if !found {
-		return nil, "no allocation for worktree " + wt, nil
+		return nil, cfg, "no allocation for worktree " + wt, nil
 	}
 
 	vars := make(map[string]string, len(cfg.Services))
@@ -70,5 +81,5 @@ func ComputeVerbose(dir string) (map[string]string, string, error) {
 		port := svc.BasePort + cfg.Project.PortOffset + alloc.Offset
 		vars[svc.EnvKey] = strconv.Itoa(port)
 	}
-	return vars, "", nil
+	return vars, cfg, "", nil
 }

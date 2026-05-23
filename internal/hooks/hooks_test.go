@@ -11,7 +11,7 @@ import (
 func TestInstallOnEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	out, err := Install(path)
+	out, err := Install(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestInstallPreservesUserHooks(t *testing.T) {
 	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := Install(path)
+	out, err := Install(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +61,14 @@ func TestInstallPreservesUserHooks(t *testing.T) {
 func TestInstallIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	first, err := Install(path)
+	first, err := Install(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(first), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	second, err := Install(path)
+	second, err := Install(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestInstallIsIdempotent(t *testing.T) {
 func TestUninstallRemovesOnlyNerve(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	if _, err := Install(path); err != nil {
+	if _, err := Install(path, false); err != nil {
 		t.Fatal(err)
 	}
 	// Reinstall with extra user hooks.
@@ -135,4 +135,111 @@ func TestUninstallNoop(t *testing.T) {
 	if changed {
 		t.Errorf("uninstall should be no-op when no nerve hooks present")
 	}
+}
+
+func TestInstallBashPreambleOptIn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// Default install: no PreToolUse / bash-preamble.
+	out, err := Install(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "bash-preamble") || strings.Contains(out, "PreToolUse") {
+		t.Errorf("default install should not include bash-preamble:\n%s", out)
+	}
+
+	// Opt-in install: PreToolUse:Bash → bash-preamble, sentinel preserved.
+	out, err = Install(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nerve bash-preamble # nerve-managed") {
+		t.Errorf("opt-in install should include bash-preamble hook:\n%s", out)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	groups := eventGroups(t, doc, "PreToolUse")
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 PreToolUse group, got %d", len(groups))
+	}
+	if groups[0]["matcher"] != "Bash" {
+		t.Errorf("expected PreToolUse matcher \"Bash\", got %v", groups[0]["matcher"])
+	}
+}
+
+// TestInstallLifecycleEventsHaveNoMatcher guards the omitempty on hookGroup.Matcher:
+// the four matcher-less lifecycle events must still serialize without a "matcher" key.
+func TestInstallLifecycleEventsHaveNoMatcher(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	out, err := Install(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"WorktreeCreate", "WorktreeRemove", "SessionStart", "CwdChanged"} {
+		for _, g := range eventGroups(t, doc, event) {
+			if _, present := g["matcher"]; present {
+				t.Errorf("%s group should have no matcher key, got %v", event, g)
+			}
+		}
+	}
+}
+
+// TestUninstallPreservesSiblingMatcher checks that removing the nerve bash-preamble
+// hook leaves a user's own PreToolUse hook — and its matcher — intact.
+func TestUninstallPreservesSiblingMatcher(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	combined := `{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "echo user-write-hook"}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "nerve bash-preamble # nerve-managed"}]}
+    ]
+  }
+}`
+	if err := os.WriteFile(path, []byte(combined), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, changed, err := Uninstall(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected uninstall to report change")
+	}
+	if strings.Contains(out, "bash-preamble") {
+		t.Errorf("nerve bash-preamble should be removed:\n%s", out)
+	}
+	if !strings.Contains(out, "echo user-write-hook") {
+		t.Errorf("user PreToolUse hook lost during uninstall:\n%s", out)
+	}
+	if !strings.Contains(out, `"matcher": "Write"`) {
+		t.Errorf("user hook's matcher lost during uninstall:\n%s", out)
+	}
+}
+
+// eventGroups returns the hook groups for an event as generic maps.
+func eventGroups(t *testing.T, doc map[string]any, event string) []map[string]any {
+	t.Helper()
+	hooksMap, _ := doc["hooks"].(map[string]any)
+	raw, ok := hooksMap[event].([]any)
+	if !ok {
+		return nil
+	}
+	groups := make([]map[string]any, 0, len(raw))
+	for _, g := range raw {
+		if m, ok := g.(map[string]any); ok {
+			groups = append(groups, m)
+		}
+	}
+	return groups
 }
