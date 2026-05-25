@@ -1,0 +1,99 @@
+# nerve project config — <repo>/.nerve/config.yaml
+#
+# This file declares the per-project services, dotfiles, templates, and lifecycle
+# hooks nerve uses when it creates a worktree. It is committed to the repo so
+# every collaborator gets the same worktree environment.
+#
+# Only `version:` and `project:` below are active. Every other section is shown
+# COMMENTED as an example — uncomment and edit the ones you need. A project with
+# no `services:` stays "lightweight": `nerve new` still creates a plain git
+# worktree, but allocates no ports. Uncomment `services:` once you have
+# network-bound components whose ports should be offset per worktree.
+#
+# Two template engines are in play (they are NOT the same):
+#   * `project.worktree_root` and `templates[].source` file bodies use SINGLE-brace
+#     substitution: {branch}, {project}, {worktree_path}, {branch_slug},
+#     {ports.<service-id>}.
+#   * `vars[].value` is rendered through DOUBLE-brace {{...}} templating with the
+#     same variable names: {{branch}}, {{project}}, {{worktree_path}},
+#     {{branch_slug}}, {{ports.<service-id>}}.
+
+version: 1
+
+project:
+    # port_offset: base offset added to every service port for THIS project, so two
+    # different projects can share base_ports without colliding. Final port for
+    # offset N is: service.base_port + project.port_offset + N.
+    port_offset: 0
+    # worktree_root: where worktrees are created. Single-brace substitution of
+    # {branch}, {project}, {branch_slug}.
+    worktree_root: .worktrees/{branch}
+    # pool_size: max simultaneous worktrees (the range of offsets N, 1..pool_size).
+    pool_size: 10
+    # background_post_create: DEPRECATED project-wide default for post_create hooks
+    # that don't set their own `background:`. Prefer per-command `background: true`
+    # on the hook instead (see hooks.post_create below).
+    # background_post_create: false
+    # background_remove: when true, teardown returns immediately by renaming the
+    # worktree into .nerve/trash/ and deleting the bytes in a detached process.
+    # background_remove: false
+    # bash_preamble: shell snippet `nerve bash-preamble` prepends to each Bash-tool
+    # command in a worktree (opt-in PreToolUse:Bash hook). Empty → nerve exports its
+    # own port vars. Set it to delegate to direnv, e.g.:
+    # bash_preamble: 'eval "$(direnv export bash 2>/dev/null)"'
+
+# services: network-bound components whose ports are offset per worktree. Each gets
+# a unique, stable port written to .env.local as `<env_key>=<port>`. Leave this
+# commented to keep the project lightweight (no port allocation) until you need it.
+# At most one service may set `primary: true` (used as the worktree's headline port).
+# services:
+#     - id: django
+#       base_port: 8000
+#       env_key: DJANGO_PORT
+#       primary: true
+#     - id: postgres
+#       base_port: 5432
+#       env_key: DATABASE_PORT
+#     - id: vite
+#       base_port: 5173
+#       env_key: VITE_PORT
+
+# vars: static, per-worktree environment values written to .env.local alongside the
+# per-service port keys. `value` is rendered through the {{...}} engine, so it can
+# interpolate {{branch}}, {{project}}, {{worktree_path}}, {{branch_slug}}, and
+# {{ports.<service-id>}}. Use it for non-port identifiers a non-shell consumer reads
+# straight from .env.local (e.g. a WORKTREE_ID for `docker compose --env-file`).
+# Each env_key must be unique across services + vars.
+# vars:
+#     - { env_key: WORKTREE_ID, value: "{{branch}}" }
+
+# clone_files: files (or directories) copied verbatim from the main checkout into
+# each new worktree. `path` is relative to the repo root. `kind` is `file` (default)
+# or `directory`. `required: true` fails create if the source is missing; otherwise
+# a missing source is skipped silently.
+# clone_files:
+#     - { path: .env,   kind: file, required: true }
+#     - { path: .npmrc, kind: file, required: false }
+
+# templates: source files rendered with single-brace {branch}/{project}/
+# {worktree_path}/{branch_slug}/{ports.<id>} substitution into the worktree. When
+# `merge: true`, the dest is treated as a dotenv file: existing keys are preserved
+# and only new keys from source are appended.
+# templates:
+#     - { source: .env.example, dest: .env.local, merge: true }
+
+# hooks: nerve's own pre/post worktree lifecycle hooks (distinct from Claude Code
+# hooks). All hooks run with the allocated ports + identity vars in their env.
+# hooks:
+#     # post_create runs after the worktree is built. Each entry is either a bare
+#     # string (FOREGROUND: runs synchronously, in order, blocking the worktree path
+#     # report — correct for env-shapers like `direnv allow`) or a mapping with
+#     # `background: true` (detached; multiple background hooks run concurrently).
+#     post_create:
+#         - direnv allow            # foreground: runs first, blocks boot
+#         - { run: uv sync, background: true }     # detached
+#         - { run: pnpm install, background: true } # detached → parallel with uv sync
+#     # pre_remove runs synchronously before teardown (it gates a destructive delete),
+#     # so it is always a plain string list.
+#     pre_remove:
+#         - "echo pre-remove ran"

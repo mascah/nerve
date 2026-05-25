@@ -59,11 +59,12 @@ https://github.com/mascah/nerve/releases
 ## Quick start
 
 ```bash
-# Register your repo with nerve
-nerve project add ~/Code/my-app
-
-# Scaffold .nerve/config.yaml (interactive)
+# From inside your repo: scaffold .nerve/config.yaml AND register the repo with nerve.
+# `nerve init` writes a static, commented config file (it is NOT interactive) and
+# auto-registers the main checkout in the global registry.
 cd ~/Code/my-app && nerve init
+
+# Edit .nerve/config.yaml to declare your services (uncomment the `services:` block).
 
 # Create a worktree — nerve allocates ports, copies dotfiles, runs post_create hooks.
 # From inside a registered repo the project is inferred, so the name is optional:
@@ -76,6 +77,8 @@ nerve list my-app
 nerve env
 ```
 
+> To register a repo that lives **elsewhere on disk** (without `cd`-ing into it to run `nerve init`), use `nerve project add ~/Code/my-app`.
+
 ## Layout
 
 | Path | Purpose |
@@ -87,15 +90,21 @@ nerve env
 
 ## Config schema (`<repo>/.nerve/config.yaml`)
 
-```yaml
-project:
-  port_offset: 0       # base offset added to every service port for this project
-  pool_size: 20        # max simultaneous worktrees
-  worktree_root: ".worktrees/{branch}"
-  # bash_preamble: ""  # opt-in: shell snippet `nerve bash-preamble` prepends to Bash
-                       # commands in a worktree (default: nerve's port exports).
-                       # e.g. eval "$(direnv export bash 2>/dev/null)" — see Integrations.
+`nerve init` writes a richly-commented version of this with only `version:` + `project:` active and every other section shown commented; uncomment what you need. The schema below is canonical (it matches the init scaffold and the structs exactly — copy-paste it as-is):
 
+```yaml
+version: 1
+
+project:
+  port_offset: 0                      # base offset added to every service port for this project
+  pool_size: 10                       # max simultaneous worktrees
+  worktree_root: ".worktrees/{branch}"
+  # background_remove: false          # opt-in: return from teardown immediately (trash + delete in background)
+  # bash_preamble: ""                 # opt-in: shell snippet `nerve bash-preamble` prepends to Bash
+                                      # commands in a worktree (default: nerve's port exports).
+                                      # e.g. eval "$(direnv export bash 2>/dev/null)" — see Integrations.
+
+# Network-bound components whose ports are offset per worktree. At most one `primary`.
 services:
   - id: django
     base_port: 8000
@@ -108,32 +117,43 @@ services:
     base_port: 5173
     env_key: VITE_PORT
 
-# Files copied verbatim from main checkout into each new worktree
-clone_files:
-  - .env
-  - .npmrc
+# Static per-worktree env values written to .env.local alongside the service ports.
+# `value` is rendered through the {{...}} engine (see template variables below).
+vars:
+  - { env_key: WORKTREE_ID, value: "{{branch}}" }
 
-# Templates rendered with per-worktree vars ({branch}, {project}, ports.<id>)
+# Files (or directories) copied verbatim from the main checkout into each new worktree.
+# `kind` is `file` (default) or `directory`; `required: true` fails create if missing.
+clone_files:
+  - { path: .env,   kind: file, required: true }
+  - { path: .npmrc, kind: file, required: false }
+
+# Source files rendered with single-brace substitution into the worktree. With
+# `merge: true` the dest is treated as a dotenv file (existing keys kept, new keys appended).
 templates:
-  - src: .env.local.tmpl
-    dst: .env.local
+  - { source: .env.example, dest: .env.local, merge: true }
 
 hooks:
   post_create:
-    - uv sync
-    - pnpm install
-  pre_remove: []
+    - direnv allow                    # bare string → foreground (sync, blocks boot)
+    - { run: uv sync, background: true }      # mapping with background: true → detached, concurrent
+    - { run: pnpm install, background: true }
+  pre_remove:
+    - "echo pre-remove ran"
 ```
 
-Available template variables: `{branch}`, `{project}`, `{worktree_path}`, `{ports.<service-id>}`.
+**Template variables.** Two engines, same variable names:
 
-**Lightweight mode:** if `.nerve/config.yaml` is absent, `nerve new` still creates a plain git worktree with no port allocation or file copying.
+- `project.worktree_root` and `templates[].source` file bodies use **single-brace** substitution: `{branch}`, `{project}`, `{worktree_path}`, `{branch_slug}`, `{ports.<service-id>}`.
+- `vars[].value` is rendered through **double-brace** `{{...}}` Go-style templating: `{{branch}}`, `{{project}}`, `{{worktree_path}}`, `{{branch_slug}}`, `{{ports.<service-id>}}`.
+
+**Lightweight mode:** if `.nerve/config.yaml` is absent (or present with no `services:`), `nerve new` still creates a plain git worktree with no port allocation or file copying. A fresh `nerve init` is lightweight until you uncomment `services:`.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `nerve init` | Scaffold `.nerve/config.yaml` interactively |
+| `nerve init` | Scaffold a commented `.nerve/config.yaml` and auto-register the repo (`--no-register` to skip, `--name`/`--default-base` mirror `project add`) |
 | `nerve project add/list/remove` | Manage global project registry |
 | `nerve new [<project>] <branch>` | Create worktree: allocate ports, copy files, run hooks (project defaults to the one enclosing cwd) |
 | `nerve remove [<project>] [<branch>]` | Remove worktree: release port, optionally delete branch (no args → cwd worktree; `<branch>` alone → cwd's project) |
