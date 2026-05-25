@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/hookstatus"
 )
@@ -178,6 +180,121 @@ func TestProjectView_RemovedErrorSurfacesBanner(t *testing.T) {
 	}
 	if msg, ok := cmd().(errMsg); !ok || !strings.Contains(msg.Error(), "nope") {
 		t.Errorf("expected errMsg carrying the failure, got %#v", cmd())
+	}
+}
+
+func TestProjectView_FocusPortsTabReturnsLoadCmd(t *testing.T) {
+	cfg := config.Defaults()
+	v := &projectView{
+		name:       "demo",
+		path:       "/tmp/demo",
+		cfg:        &cfg,
+		tab:        tabTemplates, // one shift+tab lands on tabPorts (the last tab)
+		confirmIdx: -1,
+	}
+
+	// shift+tab from Templates wraps backward? No — Templates(2) → Worktrees(3) on tab.
+	// Move forward twice: Templates → Worktrees → Ports.
+	v.Update(keyMsg("tab")) // → Worktrees
+	if v.tab != tabWorktrees {
+		t.Fatalf("expected to land on Worktrees, got tab %d", v.tab)
+	}
+	cmd := v.Update(keyMsg("tab")) // → Ports, should trigger lazy load
+	if v.tab != tabPorts {
+		t.Fatalf("expected to land on Ports, got tab %d", v.tab)
+	}
+	if !v.loadingPorts {
+		t.Error("loadingPorts should be set after focusing the Ports tab")
+	}
+	if cmd == nil {
+		t.Fatal("expected a load cmd on first focus of the Ports tab")
+	}
+	if _, ok := cmd().(portsLoadedMsg); !ok {
+		t.Errorf("expected the load cmd to produce a portsLoadedMsg, got %T", cmd())
+	}
+
+	// Re-focusing must not re-trigger a load once loaded.
+	v.loadingPorts = false
+	v.loadedPorts = true
+	v.tab = tabWorktrees
+	if again := v.Update(keyMsg("tab")); again != nil {
+		t.Error("expected no load cmd when re-focusing an already-loaded Ports tab")
+	}
+}
+
+func TestProjectView_PortsLoadedPopulatesRows(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Services = []config.Service{{ID: "web", BasePort: 3000, EnvKey: "WEB_PORT", Primary: true}}
+	v := &projectView{
+		name:         "demo",
+		path:         "/tmp/demo",
+		cfg:          &cfg,
+		tab:          tabPorts,
+		confirmIdx:   -1,
+		loadingPorts: true,
+	}
+
+	rows := []portsRow{
+		{Offset: 1, Branch: "", Ports: []portCell{{ServiceID: "web", Port: 3001, Listening: false}}},
+		{Offset: 2, Branch: "feat", Ports: []portCell{{ServiceID: "web", Port: 3002, Listening: true}}},
+	}
+	// Park the cursor out of bounds to confirm clampPortsCursor runs without panicking
+	// on the [5]int array.
+	v.cursors[tabPorts] = 9
+
+	cmd := v.Update(portsLoadedMsg{rows: rows})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd after portsLoadedMsg, got non-nil")
+	}
+	if v.loadingPorts {
+		t.Error("loadingPorts should be false after load completes")
+	}
+	if !v.loadedPorts {
+		t.Error("loadedPorts should be true after load completes")
+	}
+	if len(v.ports) != 2 {
+		t.Fatalf("expected 2 port rows, got %d", len(v.ports))
+	}
+	if v.cursors[tabPorts] != 1 {
+		t.Errorf("cursor should be clamped to last row (1), got %d", v.cursors[tabPorts])
+	}
+
+	// Rendering the Ports tab must not panic and should show the grid.
+	out := v.View()
+	if !strings.Contains(out, "OFFSET") {
+		t.Errorf("expected Ports grid header in render; got:\n%s", out)
+	}
+	if !strings.Contains(out, "feat") {
+		t.Errorf("expected allocated branch in render; got:\n%s", out)
+	}
+}
+
+func TestProjectView_PortsLightweightPlaceholder(t *testing.T) {
+	// A config with no services is lightweight — the Ports tab shows a hint, never probes.
+	v := &projectView{
+		name:        "demo",
+		path:        "/tmp/demo",
+		cfg:         &config.ProjectConfig{},
+		tab:         tabPorts,
+		confirmIdx:  -1,
+		loadedPorts: true,
+	}
+	out := v.View()
+	if !strings.Contains(out, "no services configured") {
+		t.Errorf("expected lightweight placeholder on Ports tab; got:\n%s", out)
+	}
+}
+
+// keyMsg builds a tea.KeyMsg for the given key string ("tab", "r", etc.) so Update can
+// be exercised without a real terminal.
+func keyMsg(s string) tea.KeyMsg {
+	switch s {
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
 }
 
