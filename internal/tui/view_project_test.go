@@ -27,7 +27,7 @@ func newWorktreeTestView() *projectView {
 
 func TestProjectView_WorktreesLoadedPopulatesRows(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadingWorktrees = true
+	v.worktrees.loading = true
 
 	rows := []worktreeRow{
 		{Branch: "feat-a", Path: "/wt/a", State: "clean"},
@@ -37,14 +37,14 @@ func TestProjectView_WorktreesLoadedPopulatesRows(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected nil cmd after worktreesLoadedMsg, got non-nil")
 	}
-	if v.loadingWorktrees {
-		t.Error("loadingWorktrees should be false after load completes")
+	if v.worktrees.loading {
+		t.Error("loading should be false after load completes")
 	}
-	if !v.loadedWorktrees {
-		t.Error("loadedWorktrees should be true after load completes")
+	if !v.worktrees.loaded {
+		t.Error("loaded should be true after load completes")
 	}
-	if len(v.worktrees) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(v.worktrees))
+	if len(v.worktrees.rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(v.worktrees.rows))
 	}
 
 	// The tab label count must now be visible without tabbing.
@@ -56,7 +56,7 @@ func TestProjectView_WorktreesLoadedPopulatesRows(t *testing.T) {
 
 func TestProjectView_WorktreesLoadingPlaceholder(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadingWorktrees = true
+	v.worktrees.loading = true
 
 	out := v.View()
 	if !strings.Contains(out, "loading worktrees…") {
@@ -70,13 +70,13 @@ func TestProjectView_WorktreesLoadingPlaceholder(t *testing.T) {
 
 func TestProjectView_WorktreesLoadedError(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadingWorktrees = true
+	v.worktrees.loading = true
 
 	cmd := v.Update(worktreesLoadedMsg{err: errors.New("boom")})
 	if cmd != nil {
 		t.Fatal("expected nil cmd on load error")
 	}
-	if v.worktrees != nil {
+	if v.worktrees.rows != nil {
 		t.Error("rows should be nil on load error")
 	}
 	if !strings.Contains(v.status, "boom") {
@@ -86,8 +86,8 @@ func TestProjectView_WorktreesLoadedError(t *testing.T) {
 
 func TestProjectView_DirtyConfirmIncludesCount(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadedWorktrees = true
-	v.worktrees = []worktreeRow{
+	v.worktrees.loaded = true
+	v.worktrees.rows = []worktreeRow{
 		{Branch: "feat-x", Path: "/wt/x", State: "dirty (7 files)", DirtyCount: 7},
 	}
 	v.cursors[tabWorktrees] = 0
@@ -109,8 +109,8 @@ func TestProjectView_DirtyConfirmIncludesCount(t *testing.T) {
 
 func TestProjectView_CleanConfirmMessage(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadedWorktrees = true
-	v.worktrees = []worktreeRow{
+	v.worktrees.loaded = true
+	v.worktrees.rows = []worktreeRow{
 		{Branch: "feat-clean", Path: "/wt/clean", State: "clean"},
 	}
 	v.cursors[tabWorktrees] = 0
@@ -125,8 +125,8 @@ func TestProjectView_CleanConfirmMessage(t *testing.T) {
 
 func TestProjectView_SecondPressStartsAsyncRemove(t *testing.T) {
 	v := newWorktreeTestView()
-	v.loadedWorktrees = true
-	v.worktrees = []worktreeRow{
+	v.worktrees.loaded = true
+	v.worktrees.rows = []worktreeRow{
 		{Branch: "feat-x", Path: "/wt/x", State: "clean"},
 	}
 	v.cursors[tabWorktrees] = 0
@@ -162,8 +162,8 @@ func TestProjectView_RemovedRefreshesOnSuccess(t *testing.T) {
 	if v.removing {
 		t.Error("removing guard should be cleared after removal completes")
 	}
-	if !v.loadingWorktrees {
-		t.Error("loadingWorktrees should be set while the refresh is in flight")
+	if !v.worktrees.loading {
+		t.Error("worktrees.loading should be set while the refresh is in flight")
 	}
 }
 
@@ -203,8 +203,8 @@ func TestProjectView_FocusPortsTabReturnsLoadCmd(t *testing.T) {
 	if v.tab != tabPorts {
 		t.Fatalf("expected to land on Ports, got tab %d", v.tab)
 	}
-	if !v.loadingPorts {
-		t.Error("loadingPorts should be set after focusing the Ports tab")
+	if !v.ports.loading {
+		t.Error("ports.loading should be set after focusing the Ports tab")
 	}
 	if cmd == nil {
 		t.Fatal("expected a load cmd on first focus of the Ports tab")
@@ -214,8 +214,8 @@ func TestProjectView_FocusPortsTabReturnsLoadCmd(t *testing.T) {
 	}
 
 	// Re-focusing must not re-trigger a load once loaded.
-	v.loadingPorts = false
-	v.loadedPorts = true
+	v.ports.loading = false
+	v.ports.loaded = true
 	v.tab = tabWorktrees
 	if again := v.Update(keyMsg("tab")); again != nil {
 		t.Error("expected no load cmd when re-focusing an already-loaded Ports tab")
@@ -226,19 +226,19 @@ func TestProjectView_PortsLoadedPopulatesRows(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Services = []config.Service{{ID: "web", BasePort: 3000, EnvKey: "WEB_PORT", Primary: true}}
 	v := &projectView{
-		name:         "demo",
-		path:         "/tmp/demo",
-		cfg:          &cfg,
-		tab:          tabPorts,
-		confirmIdx:   -1,
-		loadingPorts: true,
+		name:       "demo",
+		path:       "/tmp/demo",
+		cfg:        &cfg,
+		tab:        tabPorts,
+		confirmIdx: -1,
+		ports:      asyncList[portsRow]{loading: true},
 	}
 
 	rows := []portsRow{
 		{Offset: 1, Branch: "", Ports: []portCell{{ServiceID: "web", Port: 3001, Listening: false}}},
 		{Offset: 2, Branch: "feat", Ports: []portCell{{ServiceID: "web", Port: 3002, Listening: true}}},
 	}
-	// Park the cursor out of bounds to confirm clampPortsCursor runs without panicking
+	// Park the cursor out of bounds to confirm the ports clamp runs without panicking
 	// on the [5]int array.
 	v.cursors[tabPorts] = 9
 
@@ -246,14 +246,14 @@ func TestProjectView_PortsLoadedPopulatesRows(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected nil cmd after portsLoadedMsg, got non-nil")
 	}
-	if v.loadingPorts {
-		t.Error("loadingPorts should be false after load completes")
+	if v.ports.loading {
+		t.Error("ports.loading should be false after load completes")
 	}
-	if !v.loadedPorts {
-		t.Error("loadedPorts should be true after load completes")
+	if !v.ports.loaded {
+		t.Error("ports.loaded should be true after load completes")
 	}
-	if len(v.ports) != 2 {
-		t.Fatalf("expected 2 port rows, got %d", len(v.ports))
+	if len(v.ports.rows) != 2 {
+		t.Fatalf("expected 2 port rows, got %d", len(v.ports.rows))
 	}
 	if v.cursors[tabPorts] != 1 {
 		t.Errorf("cursor should be clamped to last row (1), got %d", v.cursors[tabPorts])
@@ -272,12 +272,12 @@ func TestProjectView_PortsLoadedPopulatesRows(t *testing.T) {
 func TestProjectView_PortsLightweightPlaceholder(t *testing.T) {
 	// A config with no services is lightweight — the Ports tab shows a hint, never probes.
 	v := &projectView{
-		name:        "demo",
-		path:        "/tmp/demo",
-		cfg:         &config.ProjectConfig{},
-		tab:         tabPorts,
-		confirmIdx:  -1,
-		loadedPorts: true,
+		name:       "demo",
+		path:       "/tmp/demo",
+		cfg:        &config.ProjectConfig{},
+		tab:        tabPorts,
+		confirmIdx: -1,
+		ports:      asyncList[portsRow]{loaded: true},
 	}
 	out := v.View()
 	if !strings.Contains(out, "no services configured") {

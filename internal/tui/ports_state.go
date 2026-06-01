@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/ports"
@@ -122,4 +124,84 @@ func sortedBranchOffsets(rows []portsRow) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+// portCellWidth is the fixed render width of one port cell ("●  8003"): a one-rune
+// marker, two spaces, and a right-padded port number. Keeps service columns aligned.
+const portCellWidth = 11
+
+// renderPorts draws the whole pool as a grid: one row per offset, columns for the
+// offset number, the holding branch (or "free"), and each service's resolved port with
+// a liveness marker (● in use / ○ free). A free offset row is muted; allocated rows are
+// normal. Cell color distinguishes an external squatter (listening on an offset nerve
+// did not allocate, red) from a nerve-allocated-but-idle port (warn) and a healthy
+// allocated-and-listening port (green).
+func (v *projectView) renderPorts() string {
+	if v.ports.len() == 0 {
+		return muted.Render("no port pool — set a pool_size and a primary service in .nerve/config.yaml")
+	}
+	var b strings.Builder
+
+	// Header: OFFSET | BRANCH | <svc1> <svc2> …
+	header := fmt.Sprintf("  %-7s  %-24s", "OFFSET", "BRANCH")
+	for _, id := range serviceIDsInOrder(v.cfg) {
+		header += "  " + fmt.Sprintf("%-*s", portCellWidth, id)
+	}
+	b.WriteString(subtitleStyle.Render(header))
+	b.WriteString("\n")
+
+	for i, row := range v.ports.rows {
+		allocated := row.Branch != ""
+		branch := row.Branch
+		if branch == "" {
+			branch = "free"
+		}
+		var cells strings.Builder
+		for _, c := range row.Ports {
+			cells.WriteString("  ")
+			cells.WriteString(portCellText(c, allocated))
+		}
+		line := fmt.Sprintf("  %-7d  %-24s%s", row.Offset, branch, cells.String())
+
+		switch {
+		case i == v.cursors[tabPorts]:
+			b.WriteString(selectedRow.Render("▸ " + strings.TrimPrefix(line, "  ")))
+		case !allocated:
+			// A free offset row is muted overall, but a listening port on it (an
+			// external squatter) is colored inside portCellText, so render piecewise:
+			// the offset/branch prefix is muted; the already-styled cells pass through.
+			prefix := fmt.Sprintf("  %-7d  %-24s", row.Offset, branch)
+			b.WriteString(muted.Render(prefix))
+			b.WriteString(cells.String())
+		default:
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// portCellText renders one port cell: a marker (● listening / ○ free) plus the port
+// number, padded to portCellWidth. allocated reports whether nerve has claimed this
+// offset, which drives the color of a listening port (green when expected, red when an
+// external squatter is sitting on an offset nerve never allocated).
+func portCellText(c portCell, allocated bool) string {
+	marker := "○"
+	if c.Listening {
+		marker = "●"
+	}
+	text := fmt.Sprintf("%s %-*d", marker, portCellWidth-2, c.Port)
+	switch {
+	case c.Listening && allocated:
+		return statusOK.Render(text)
+	case c.Listening && !allocated:
+		// Something is bound on an offset nerve didn't allocate — flag it loudly.
+		return statusErr.Render(text)
+	case !c.Listening && allocated:
+		// Allocated to a worktree but nothing is up yet (dev server not started).
+		return statusWarn.Render(text)
+	default:
+		// Free and idle.
+		return muted.Render(text)
+	}
 }
