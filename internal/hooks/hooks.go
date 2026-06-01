@@ -4,6 +4,11 @@
 // The merge strategy is conservative: any user-written hooks in the same event
 // arrays are preserved; nerve's own entries are tagged with a sentinel ("# nerve-managed")
 // in their command string so Uninstall can find and remove only its own entries.
+//
+// Install/Uninstall operate directly on the generic map[string]any / []any tree
+// loaded from settings.json. They never decode user entries into typed structs, so
+// fields nerve doesn't model (e.g. Claude Code's per-hook "timeout") survive a
+// round-trip untouched.
 package hooks
 
 import (
@@ -60,14 +65,29 @@ func Snippet(bashPreamble bool) SettingsSnippet {
 // Install reads the existing settings.json at path (if present), merges in nerve's
 // hook entries (idempotently), and returns the merged JSON as a string. When
 // bashPreamble is true the opt-in PreToolUse:Bash hook is included.
+//
+// User-authored entries (and any fields nerve doesn't model, such as a per-hook
+// "timeout") are preserved verbatim — the merge edits the generic tree in place
+// rather than round-tripping through nerve's typed structs.
 func Install(path string, bashPreamble bool) (string, error) {
 	doc, err := loadJSON(path)
 	if err != nil {
 		return "", err
 	}
-	hooks := ensureHooksMap(doc)
+	hooks, err := ensureHooksMap(doc)
+	if err != nil {
+		return "", err
+	}
 	for event, groups := range Snippet(bashPreamble).Hooks {
-		hooks[event] = mergeEvent(asGroupSlice(hooks[event]), groups)
+		existing, err := asAnySlice(hooks[event])
+		if err != nil {
+			return "", fmt.Errorf("hooks.%s: %w", event, err)
+		}
+		merged, err := mergeEvent(existing, groups)
+		if err != nil {
+			return "", fmt.Errorf("hooks.%s: %w", event, err)
+		}
+		hooks[event] = merged
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -78,28 +98,49 @@ func Install(path string, bashPreamble bool) (string, error) {
 
 // Uninstall removes nerve-managed hook entries from path. Returns the resulting
 // JSON, a flag indicating whether anything changed, and an error.
+//
+// Only entries whose command contains the sentinel are dropped; every other entry —
+// and every field on it — is left untouched.
 func Uninstall(path string) (string, bool, error) {
 	doc, err := loadJSON(path)
 	if err != nil {
 		return "", false, err
 	}
-	hooks := ensureHooksMap(doc)
+	hooks, err := ensureHooksMap(doc)
+	if err != nil {
+		return "", false, err
+	}
 	changed := false
 	for event, raw := range hooks {
-		groups := asGroupSlice(raw)
-		cleaned := make([]hookGroup, 0, len(groups))
+		groups, err := asAnySlice(raw)
+		if err != nil {
+			return "", false, fmt.Errorf("hooks.%s: %w", event, err)
+		}
+		cleaned := make([]any, 0, len(groups))
 		for _, g := range groups {
-			keep := make([]singleHook, 0, len(g.Hooks))
-			for _, h := range g.Hooks {
-				if !isNerveCommand(h.Command) {
-					keep = append(keep, h)
-				} else {
+			group, ok := g.(map[string]any)
+			if !ok {
+				// Unrecognized group shape — leave it intact.
+				cleaned = append(cleaned, g)
+				continue
+			}
+			inner, err := asAnySlice(group["hooks"])
+			if err != nil {
+				return "", false, fmt.Errorf("hooks.%s.hooks: %w", event, err)
+			}
+			keep := make([]any, 0, len(inner))
+			for _, h := range inner {
+				if hookIsNerve(h) {
 					changed = true
+					continue
 				}
+				keep = append(keep, h)
 			}
-			if len(keep) > 0 {
-				cleaned = append(cleaned, hookGroup{Matcher: g.Matcher, Hooks: keep})
+			if len(keep) == 0 {
+				continue
 			}
+			group["hooks"] = keep
+			cleaned = append(cleaned, group)
 		}
 		if len(cleaned) == 0 {
 			delete(hooks, event)
@@ -120,21 +161,70 @@ func Uninstall(path string) (string, bool, error) {
 	return string(out) + "\n", true, nil
 }
 
-func mergeEvent(existing, incoming []hookGroup) []hookGroup {
-	// Drop any prior nerve-managed entries (treat install as idempotent), then append.
-	cleaned := make([]hookGroup, 0, len(existing))
+// mergeEvent edits the existing event group slice (a generic []any of group maps),
+// dropping any prior nerve-managed entries (so install is idempotent) and appending
+// nerve's own entries. User entries and any fields nerve doesn't model are preserved.
+func mergeEvent(existing []any, incoming []hookGroup) ([]any, error) {
+	cleaned := make([]any, 0, len(existing)+len(incoming))
 	for _, g := range existing {
-		keep := make([]singleHook, 0, len(g.Hooks))
-		for _, h := range g.Hooks {
-			if !isNerveCommand(h.Command) {
-				keep = append(keep, h)
+		group, ok := g.(map[string]any)
+		if !ok {
+			// Unrecognized group shape — leave it intact.
+			cleaned = append(cleaned, g)
+			continue
+		}
+		inner, err := asAnySlice(group["hooks"])
+		if err != nil {
+			return nil, fmt.Errorf("hooks: %w", err)
+		}
+		keep := make([]any, 0, len(inner))
+		for _, h := range inner {
+			if hookIsNerve(h) {
+				continue
 			}
+			keep = append(keep, h)
 		}
-		if len(keep) > 0 {
-			cleaned = append(cleaned, hookGroup{Matcher: g.Matcher, Hooks: keep})
+		if len(keep) == 0 {
+			continue
 		}
+		group["hooks"] = keep
+		cleaned = append(cleaned, group)
 	}
-	return append(cleaned, incoming...)
+	// Append nerve's own entries as plain maps so they serialize like the rest of the doc.
+	for _, g := range incoming {
+		m, err := groupToMap(g)
+		if err != nil {
+			return nil, err
+		}
+		cleaned = append(cleaned, m)
+	}
+	return cleaned, nil
+}
+
+// groupToMap converts nerve's typed hookGroup into the generic map tree, so appended
+// entries share the same shape as the rest of the document.
+func groupToMap(g hookGroup) (map[string]any, error) {
+	raw, err := json.Marshal(g)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// hookIsNerve reports whether a generic hook entry is one of nerve's own (its command
+// string contains the sentinel). Non-map entries and entries without a string command
+// are treated as not-nerve and preserved.
+func hookIsNerve(h any) bool {
+	m, ok := h.(map[string]any)
+	if !ok {
+		return false
+	}
+	cmd, _ := m["command"].(string)
+	return isNerveCommand(cmd)
 }
 
 func isNerveCommand(cmd string) bool { return strings.Contains(cmd, sentinel) }
@@ -160,35 +250,31 @@ func loadJSON(path string) (map[string]any, error) {
 	return doc, nil
 }
 
-func ensureHooksMap(doc map[string]any) map[string]any {
+// ensureHooksMap returns the "hooks" object, creating it when absent. A present-but-
+// non-object "hooks" value is an error rather than silently discarded — overwriting it
+// would lose user data.
+func ensureHooksMap(doc map[string]any) (map[string]any, error) {
 	v, ok := doc["hooks"]
 	if !ok {
 		m := map[string]any{}
 		doc["hooks"] = m
-		return m
+		return m, nil
 	}
 	if m, ok := v.(map[string]any); ok {
-		return m
+		return m, nil
 	}
-	// Unexpected type — start fresh.
-	m := map[string]any{}
-	doc["hooks"] = m
-	return m
+	return nil, fmt.Errorf("settings.json: %q is %T, expected an object", "hooks", v)
 }
 
-// asGroupSlice converts a generic JSON value back into []hookGroup so we can edit it.
-// Errors during round-trip cause the entry to be treated as empty.
-func asGroupSlice(v any) []hookGroup {
+// asAnySlice coerces a generic JSON value into a []any so it can be edited in place.
+// nil yields a nil slice. A present-but-non-array value is an error rather than
+// silently dropped — overwriting it would lose user data.
+func asAnySlice(v any) ([]any, error) {
 	if v == nil {
-		return nil
+		return nil, nil
 	}
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil
+	if s, ok := v.([]any); ok {
+		return s, nil
 	}
-	var out []hookGroup
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil
-	}
-	return out
+	return nil, fmt.Errorf("expected an array, got %T", v)
 }

@@ -28,7 +28,9 @@ Pass --verbose with --inject to print the no-op reason to stderr.`,
 	cmd.Flags().Bool("inject", false, "append to $CLAUDE_ENV_FILE (use from Claude Code hooks)")
 	cmd.Flags().Bool("shell", false, "print 'export KEY=VALUE' lines")
 	cmd.Flags().Bool("json", false, "JSON output")
-	cmd.Flags().Bool("verbose", false, "with --inject, log no-op reasons to stderr")
+	// --verbose intentionally not declared here: the root command's persistent
+	// -v/--verbose flag is inherited, and runEnv reads it via Flags().GetBool.
+	// A local declaration would shadow it (e.g. `nerve env --inject -v` would no-op).
 	cmd.Flags().String("worktree", "", "explicit worktree path (defaults to cwd)")
 	return cmd
 }
