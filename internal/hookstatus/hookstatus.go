@@ -21,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/mascah/nerve/internal/atomicfile"
 )
 
 // State is the lifecycle phase of a backgrounded hook run.
@@ -80,20 +82,7 @@ func Write(repoRoot, slug string, s Status) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "status-*.json.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once renamed
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, StatusPath(repoRoot, slug))
+	return atomicfile.Write(StatusPath(repoRoot, slug), raw, 0o644)
 }
 
 // Read loads the status for a worktree slug. found is false (with a nil error)
