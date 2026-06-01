@@ -13,10 +13,10 @@ import (
 // cloneForm adds a CloneFile entry: path, kind (file|directory|auto), required toggle.
 type cloneForm struct {
 	repoRoot string
-	pathIn   textinput.Model
-	kindIdx  int // 0=auto, 1=file, 2=directory
+	inputs   []textinput.Model // len 1: [0]=path
+	kindIdx  int               // 0=auto, 1=file, 2=directory
 	required bool
-	focus    int // 0=path, 1=kind, 2=required, 3=submit
+	ring     focusRing // stops: 0=path, 1=kind, 2=required, 3=submit
 	status   string
 
 	// suggestions is the rolling autocomplete list shown below the path field
@@ -42,7 +42,9 @@ func newCloneForm(repoRoot string) *cloneForm {
 	pi.CharLimit = 256
 	pi.Width = 50
 	pi.Focus()
-	return &cloneForm{repoRoot: repoRoot, pathIn: pi}
+	f := &cloneForm{repoRoot: repoRoot, inputs: []textinput.Model{pi}}
+	f.ring = newFocusRing(&f.inputs, 4)
+	return f
 }
 
 func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
@@ -51,7 +53,7 @@ func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 		// Suggestion-list keys only activate while the path field has focus
 		// AND there are suggestions to act on. They take precedence over the
 		// generic form-navigation handlers below.
-		if f.focus == 0 && len(f.suggestions) > 0 {
+		if f.ring.cur() == 0 && len(f.suggestions) > 0 {
 			switch key {
 			case "down":
 				if f.suggestionCursor < len(f.suggestions)-1 {
@@ -68,8 +70,8 @@ func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 				// move caret to the end, and clear the suggestion list so
 				// subsequent Tab/Enter behave normally (next field / submit).
 				pick := f.suggestions[f.suggestionCursor]
-				f.pathIn.SetValue(pick)
-				f.pathIn.CursorEnd()
+				f.inputs[0].SetValue(pick)
+				f.inputs[0].CursorEnd()
 				f.suggestions = nil
 				f.suggestionCursor = 0
 				f.lastQuery = pick
@@ -79,42 +81,39 @@ func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 
 		switch key {
 		case "esc":
-			return f.backToProject()
+			return backToProject(f.repoRoot)
 		case "tab":
-			f.focus = (f.focus + 1) % 4
-			f.applyFocus()
+			f.ring.next()
 			return nil
 		case "shift+tab":
-			f.focus = (f.focus + 3) % 4
-			f.applyFocus()
+			f.ring.prev()
 			return nil
 		case "enter":
-			if f.focus == 3 {
+			if f.ring.cur() == 3 {
 				return f.submit()
 			}
-			f.focus = (f.focus + 1) % 4
-			f.applyFocus()
+			f.ring.next()
 			return nil
 		case " ":
-			if f.focus == 2 {
+			if f.ring.cur() == 2 {
 				f.required = !f.required
 				return nil
 			}
 		case "left", "h":
-			if f.focus == 1 {
+			if f.ring.cur() == 1 {
 				f.kindIdx = (f.kindIdx + len(kindOptions) - 1) % len(kindOptions)
 				return nil
 			}
 		case "right", "l":
-			if f.focus == 1 {
+			if f.ring.cur() == 1 {
 				f.kindIdx = (f.kindIdx + 1) % len(kindOptions)
 				return nil
 			}
 		}
 	}
-	if f.focus == 0 {
+	if f.ring.cur() == 0 {
 		var cmd tea.Cmd
-		f.pathIn, cmd = f.pathIn.Update(msg)
+		f.inputs[0], cmd = f.inputs[0].Update(msg)
 		f.refreshSuggestions()
 		return cmd
 	}
@@ -126,7 +125,7 @@ func (f *cloneForm) Update(msg tea.Msg) tea.Cmd {
 // lastQuery) and bounded by listPathSuggestions's depth/scan ceilings when it
 // does change.
 func (f *cloneForm) refreshSuggestions() {
-	q := f.pathIn.Value()
+	q := f.inputs[0].Value()
 	if q == f.lastQuery {
 		return
 	}
@@ -137,15 +136,8 @@ func (f *cloneForm) refreshSuggestions() {
 	}
 }
 
-func (f *cloneForm) applyFocus() {
-	f.pathIn.Blur()
-	if f.focus == 0 {
-		f.pathIn.Focus()
-	}
-}
-
 func (f *cloneForm) submit() tea.Cmd {
-	path := strings.TrimSpace(f.pathIn.Value())
+	path := strings.TrimSpace(f.inputs[0].Value())
 	if path == "" {
 		f.status = "path is required"
 		return nil
@@ -173,19 +165,7 @@ func (f *cloneForm) submit() tea.Cmd {
 		f.status = "save: " + err.Error()
 		return nil
 	}
-	return f.backToProject()
-}
-
-func (f *cloneForm) backToProject() tea.Cmd {
-	name := ""
-	if reg, err := config.LoadGlobalRegistry(); err == nil {
-		if e := reg.FindProjectByPath(f.repoRoot); e != nil {
-			name = e.Name
-		}
-	}
-	return func() tea.Msg {
-		return switchViewMsg{to: viewProject, payload: projectPayload{name: name, path: f.repoRoot}}
-	}
+	return backToProject(f.repoRoot)
 }
 
 func (f *cloneForm) View() string {
@@ -196,11 +176,11 @@ func (f *cloneForm) View() string {
 	b.WriteString("\n\n")
 
 	b.WriteString(formLabel.Render("path (relative to repo)") + "\n")
-	b.WriteString(panelStyle.Render(f.pathIn.View()))
+	b.WriteString(panelStyle.Render(f.inputs[0].View()))
 	b.WriteString("\n")
 	// Suggestion list — only rendered while the path field has focus and we
 	// actually have matches. Up/down move the cursor; Tab/Enter accept.
-	if f.focus == 0 && len(f.suggestions) > 0 {
+	if f.ring.cur() == 0 && len(f.suggestions) > 0 {
 		for i, sug := range f.suggestions {
 			if i == f.suggestionCursor {
 				b.WriteString(selectedRow.Render("▸ " + sug))
@@ -220,13 +200,13 @@ func (f *cloneForm) View() string {
 		// every tab the same width so the bottom border stays aligned.
 		var s string
 		switch {
-		case i == f.kindIdx && f.focus == 1:
+		case i == f.kindIdx && f.ring.cur() == 1:
 			s = tabKindActive.Render(k)
 		case i == f.kindIdx:
 			// Selected option, but focus is elsewhere — show it as active but
 			// without the reverse-video focus emphasis.
 			s = tabActive.Render(k)
-		case f.focus == 1:
+		case f.ring.cur() == 1:
 			s = tabInactive.Render(k)
 		default:
 			s = tabInactive.Render(k)
@@ -240,7 +220,7 @@ func (f *cloneForm) View() string {
 	if f.required {
 		reqLabel = "[x] required (fail nerve new if missing)"
 	}
-	if f.focus == 2 {
+	if f.ring.cur() == 2 {
 		b.WriteString(selectedRow.Render(reqLabel))
 	} else {
 		b.WriteString(muted.Render(reqLabel))
@@ -248,7 +228,7 @@ func (f *cloneForm) View() string {
 	b.WriteString("\n\n")
 
 	submit := "[ Submit ]"
-	if f.focus == 3 {
+	if f.ring.cur() == 3 {
 		b.WriteString(selectedRow.Render(submit))
 	} else {
 		b.WriteString(muted.Render(submit))

@@ -16,7 +16,7 @@ type serviceForm struct {
 	repoRoot string
 	inputs   []textinput.Model
 	primary  bool
-	focus    int // 0..3=inputs, 4=primary toggle, 5=submit
+	ring     focusRing // stops: 0..2=inputs, 3=primary toggle, 4=submit
 	status   string
 }
 
@@ -37,6 +37,7 @@ func newServiceForm(repoRoot string) *serviceForm {
 			mk("DOCKER_HOST_DJANGO_PORT", 40),
 		},
 	}
+	f.ring = newFocusRing(&f.inputs, 5)
 	f.inputs[0].Focus()
 	return f
 }
@@ -45,43 +46,32 @@ func (f *serviceForm) Update(msg tea.Msg) tea.Cmd {
 	if m, ok := msg.(tea.KeyMsg); ok {
 		switch m.String() {
 		case "esc":
-			return f.backToProject()
+			return backToProject(f.repoRoot)
 		case "tab":
-			f.focus = (f.focus + 1) % 5
-			f.applyFocus()
+			f.ring.next()
 			return nil
 		case "shift+tab":
-			f.focus = (f.focus + 4) % 5
-			f.applyFocus()
+			f.ring.prev()
 			return nil
 		case "enter":
-			if f.focus == 4 {
+			if f.ring.cur() == 4 {
 				return f.submit()
 			}
-			f.focus = (f.focus + 1) % 5
-			f.applyFocus()
+			f.ring.next()
 			return nil
 		case " ":
-			if f.focus == 3 {
+			if f.ring.cur() == 3 {
 				f.primary = !f.primary
 				return nil
 			}
 		}
 	}
 	var cmd tea.Cmd
-	if f.focus >= 0 && f.focus < len(f.inputs) {
-		f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
+	if f.ring.onInput() {
+		i := f.ring.cur()
+		f.inputs[i], cmd = f.inputs[i].Update(msg)
 	}
 	return cmd
-}
-
-func (f *serviceForm) applyFocus() {
-	for i := range f.inputs {
-		f.inputs[i].Blur()
-	}
-	if f.focus >= 0 && f.focus < len(f.inputs) {
-		f.inputs[f.focus].Focus()
-	}
 }
 
 func (f *serviceForm) submit() tea.Cmd {
@@ -123,21 +113,7 @@ func (f *serviceForm) submit() tea.Cmd {
 		f.status = "save: " + err.Error()
 		return nil
 	}
-	return f.backToProject()
-}
-
-func (f *serviceForm) backToProject() tea.Cmd {
-	// We need the project name + path to switch back to viewProject. We have
-	// the path; look up the name from the global registry to be exact.
-	name := ""
-	if reg, err := config.LoadGlobalRegistry(); err == nil {
-		if e := reg.FindProjectByPath(f.repoRoot); e != nil {
-			name = e.Name
-		}
-	}
-	return func() tea.Msg {
-		return switchViewMsg{to: viewProject, payload: projectPayload{name: name, path: f.repoRoot}}
-	}
+	return backToProject(f.repoRoot)
 }
 
 func (f *serviceForm) View() string {
@@ -158,7 +134,7 @@ func (f *serviceForm) View() string {
 	if f.primary {
 		primaryLabel = "[x] mark primary (drives port pool start)"
 	}
-	if f.focus == 3 {
+	if f.ring.cur() == 3 {
 		b.WriteString(selectedRow.Render(primaryLabel))
 	} else {
 		b.WriteString(muted.Render(primaryLabel))
@@ -166,7 +142,7 @@ func (f *serviceForm) View() string {
 	b.WriteString("\n\n")
 
 	submit := "[ Submit ]"
-	if f.focus == 4 {
+	if f.ring.cur() == 4 {
 		b.WriteString(selectedRow.Render(submit))
 	} else {
 		b.WriteString(muted.Render(submit))
