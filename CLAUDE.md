@@ -18,9 +18,13 @@ make vet             # go vet ./...
 make fmt             # gofmt -s -w .
 make tidy            # go mod tidy
 make dev ARGS="..."  # go run ./cmd/nerve <args>
+make lint            # golangci-lint run (falls back to go vet if not installed)
+make hooks           # install lefthook git hooks (needs the lefthook binary)
 ```
 
 Run a single test: `go test ./internal/hooks -run TestInstall`. Most packages have focused `_test.go` files (`hooks`, `ports`, `config`, `envfile`, `tui`).
+
+**Lint + git hooks.** `.golangci.yml` configures golangci-lint v2 (the standard set: errcheck/govet/ineffassign/staticcheck/unused, with errcheck excluding fire-and-forget I/O). `lefthook.yml` defines the **pre-commit** hook — the fast static checks: gofmt/vet/golangci-lint/build. CI (`.github/workflows/ci.yml`) runs those same jobs via `lefthook run pre-commit --all-files` (so local and CI lint/build can't drift) and then runs the test suite with `go test -race`. Tests deliberately stay out of git hooks — kept fast, and not run inside git's hook environment. Dev setup: install `golangci-lint` and `lefthook` (both `go install`-able; versions pinned in the CI workflow's `env:`), then `make hooks`.
 
 Release: tag `vX.Y.Z` + push, then bump `url`+`sha256` in the [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap) formula (`brew install mascah/tap/nerve` builds from source — no signing). `goreleaser release --clean` optionally builds darwin arm64+amd64 archives for direct download; it no longer publishes to Homebrew.
 
@@ -97,8 +101,8 @@ The four events nerve registers:
 
 ## Conventions worth knowing
 
-- **Exit codes** are listed in `internal/cli/common.go` and `docs/TESTING.md`'s quick reference. Currently `cmd/nerve/main.go` exits 1 on any error; `exitCodeError` is plumbed through `nerve new` for `ErrPoolExhausted` but not yet honored by `main.go` — if you wire that through, update both ends.
-- **Atomic writes** — both `internal/config.writeYAMLAtomic` and `internal/registry.writeAtomic` write to a sibling temp file and `os.Rename`. New persistence should follow this pattern.
+- **Exit codes** are listed in `internal/cli/common.go` and `docs/TESTING.md`'s quick reference. `cmd/nerve/main.go` maps the root command's error to a code via `cli.ExitCode`: a `nil` error → `ExitOK`, an `exitCodeError` → its `Code` (e.g. `nerve new` returns `ExitPoolExhausted` on `ErrPoolExhausted`), any other error → `ExitUsage` (1). To add a new coded exit, return an `exitCodeError{Code, Err}` from the relevant `RunE` — `main.go` needs no change.
+- **Atomic writes** — all bytes-to-disk persistence goes through `internal/atomicfile.Write(path, data, perm)`, which writes a sibling temp file in the destination dir and `os.Rename`s it into place (`internal/config`, `internal/jsonstore` (registry+leases), `internal/hookstatus`, `internal/envfile`, and worktree template rendering all call it). New persistence should reuse it rather than re-rolling temp+rename. (`internal/clone.copyFile` keeps its own streaming temp+rename since it `io.Copy`s rather than holding bytes in memory.)
 - **Silent no-ops in hook contexts** — `nerve env --inject` deliberately returns exit 0 with no output when cwd isn't in a registered + configured worktree, because it's wired into `SessionStart` / `CwdChanged` and surfacing errors would noise up every Claude session. Keep that contract.
 - **Hidden hook commands** — `worktree-create`, `worktree-remove`, `run-hooks`, and `gc-trash` are `Hidden: true` on the cobra command. They're not for humans: `run-hooks` is the detached post_create runner (writes `internal/hookstatus`), `gc-trash` empties `.nerve/trash/` (also sweeping leftovers from an interrupted delete).
 - **Detached background work** — `worktree.spawnDetached` (`spawn_unix.go`, `Setsid`; a `!unix` stub returns "unsupported" so callers fall back to synchronous) re-execs the nerve binary fully detached with std streams to `/dev/null` — never inherit the parent's stdout, since the WorktreeCreate hook reads the worktree path from it. The package var `spawnDetachedFn` is the injection point for hermetic tests (mirrors `ports.ProbeFunc`).

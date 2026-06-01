@@ -65,7 +65,7 @@ func TestAllocateSkipsBoundPorts(t *testing.T) {
 	reg := freshRegistry()
 	// Probe says ports for offset 1 are busy (postgres squatter); offset 2 is free.
 	probe := func(port int) bool {
-		return !(port == 5433)
+		return port != 5433
 	}
 	res, err := Allocate(reg, cfg, "/tmp/wt", "feat", probe, nil)
 	if err != nil {

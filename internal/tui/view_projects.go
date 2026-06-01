@@ -23,8 +23,7 @@ type projectRow struct {
 	configured  bool
 	worktrees   int
 	allocations int
-	pool        config.ProjectConfig // optional, zero if lightweight
-	err         string               // non-empty when the row failed to load
+	err         string // non-empty when the row failed to load
 }
 
 func newProjectsView() (*projectsView, error) {

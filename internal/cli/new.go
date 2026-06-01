@@ -74,8 +74,6 @@ func runNew(cmd *cobra.Command, args []string) error {
 		switch {
 		case errors.Is(err, ports.ErrPoolExhausted):
 			printErr(cmd, err.Error())
-			cmd.SilenceErrors = true
-			cmd.SilenceUsage = true
 			fmt.Fprintln(cmd.ErrOrStderr(), "hint: try `nerve ports cleanup` to drop stale allocations")
 			return exitCodeError{Code: ExitPoolExhausted, Err: err}
 		}

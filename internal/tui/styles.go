@@ -64,11 +64,9 @@ var (
 			BorderForeground(colorAccent)
 
 	formLabel = lipgloss.NewStyle().Foreground(colorMuted).Bold(true)
-	formInput = lipgloss.NewStyle().Foreground(colorFg)
 
 	selectedRow = lipgloss.NewStyle().
 			Foreground(colorFg).
 			Background(colorBgPanel).
 			Padding(0, 1)
-	normalRow = lipgloss.NewStyle().Padding(0, 1)
 )

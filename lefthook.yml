@@ -1,0 +1,35 @@
+# lefthook — git pre-commit hooks for nerve.
+#
+# Local setup: install the lefthook binary, then `lefthook install` (or `make hooks`)
+# to wire the hook. golangci-lint must also be on PATH (see the Makefile lint target /
+# https://golangci-lint.run/usage/install/).
+#
+# These are the fast static checks. The test suite runs in CI (go test -race), not in
+# a git hook — keeps commits fast and avoids running tests inside git's hook
+# environment. CI runs these same jobs via `lefthook run pre-commit --all-files`, so
+# local and CI lint/build can't drift. Jobs operate on the whole module (./...).
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      tags: format
+      run: |
+        unformatted=$(gofmt -s -l $(git ls-files '*.go'))
+        if [ -n "$unformatted" ]; then
+          echo "These files need gofmt -s -w:"
+          echo "$unformatted"
+          exit 1
+        fi
+    vet:
+      tags: lint
+      run: go vet ./...
+    golangci-lint:
+      tags: lint
+      run: golangci-lint run ./...
+    build:
+      tags: build
+      # -buildvcs=false: this is a compile check, not a release build, so skip git
+      # VCS stamping. nerve is developed in git worktrees (and the repo can be bare),
+      # where buildvcs stamping fails; the real version stamp is set in the Makefile.
+      run: go build -buildvcs=false ./...

@@ -20,7 +20,6 @@ func newRefreshCmd() *cobra.Command {
 		Short: "Re-render templates and .env.local in cwd worktree",
 		RunE:  runRefresh,
 	}
-	cmd.Flags().Bool("force", false, "overwrite existing files (default true; reserved for future merge tweaks)")
 	return cmd
 }
 

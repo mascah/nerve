@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/mascah/nerve/internal/atomicfile"
 )
 
 // AppendToClaudeEnv appends `export KEY=VALUE` lines from vars to the file at
@@ -41,23 +43,5 @@ func WriteFile(path string, vars map[string]string) error {
 	if path == "" {
 		return errors.New("envfile: empty path")
 	}
-	body := Render(vars)
-	tmp, err := os.CreateTemp("", "nerve-envfile-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return atomicfile.Write(path, []byte(Render(vars)), 0o644)
 }

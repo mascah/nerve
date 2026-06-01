@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/gofrs/flock"
+	"github.com/mascah/nerve/internal/atomicfile"
 )
 
 // Document is the on-disk shape a Store persists. The version accessors let the
@@ -170,24 +171,7 @@ func (s *Store[T]) writeAtomic(doc T) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return atomicfile.Write(s.path, data, 0o644)
 }
 
 func (s *Store[T]) ensureDir() error {

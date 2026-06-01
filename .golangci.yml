@@ -1,0 +1,24 @@
+# golangci-lint v2 configuration.
+# Run locally with `make lint` (or `golangci-lint run`); CI runs the same.
+version: "2"
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  # High signal, low false-positive — a good default before a project goes public.
+  default: standard
+
+  settings:
+    errcheck:
+      # Functions whose returned error is genuinely not actionable at the call site.
+      exclude-functions:
+        # Progress / diagnostic output to stderr or io.Discard.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Deferred resource cleanup where a close/unlock error can't change the outcome.
+        - (*os.File).Close
+        - (*github.com/gofrs/flock.Flock).Unlock
+
+formatters:
+  enable:
+    - gofmt

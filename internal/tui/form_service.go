@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -179,6 +178,5 @@ func (f *serviceForm) View() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("tab next  space toggle primary  ⏎ submit  esc cancel"))
-	_ = fmt.Sprintf
 	return b.String()
 }

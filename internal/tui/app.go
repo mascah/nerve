@@ -47,10 +47,6 @@ type switchViewMsg struct {
 	payload any
 }
 
-// reloadMsg asks the current view to reload its underlying data (e.g. after a
-// mutation written to disk by a sibling view).
-type reloadMsg struct{}
-
 // errMsg surfaces a non-fatal error as a transient banner.
 type errMsg struct{ err error }
 

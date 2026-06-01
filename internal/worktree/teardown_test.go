@@ -132,7 +132,7 @@ func TestChdirAwayIfInside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	// Standing inside the target → should be moved to repoRoot.
 	if err := os.Chdir(canonTarget); err != nil {

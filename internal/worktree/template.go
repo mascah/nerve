@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mascah/nerve/internal/atomicfile"
 	"github.com/mascah/nerve/internal/config"
 	"github.com/mascah/nerve/internal/envfile"
 )
@@ -48,7 +49,7 @@ func renderTemplates(srcRoot, dstRoot string, cfg *config.ProjectConfig, tmplVar
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		if err := writeFileAtomic(dst, []byte(rendered), 0o644); err != nil {
+		if err := atomicfile.Write(dst, []byte(rendered), 0o644); err != nil {
 			return err
 		}
 		if log != nil {
@@ -170,25 +171,4 @@ func parseDotenvKey(line string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(trim[:eq]), true
-}
-
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
 }
