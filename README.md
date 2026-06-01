@@ -46,13 +46,13 @@ cd nerve
 make install   # → $GOPATH/bin/nerve
 ```
 
-**Homebrew** (builds from source; pulls a Go toolchain if you don't have one):
+**Homebrew** (installs a prebuilt binary — no compile, no Go toolchain; macOS + Linux, arm64 + amd64):
 
 ```bash
 brew install mascah/tap/nerve
 ```
 
-**Download a release archive:**
+**Download a release archive:** prebuilt `tar.gz` for darwin/linux × arm64/amd64, plus `checksums.txt`:
 
 ```
 https://github.com/mascah/nerve/releases
@@ -232,6 +232,19 @@ Because not everyone on your team will have nerve installed, `nerve hooks instal
 
 ## Releasing
 
-1. **Tag and push:** `git tag vX.Y.Z && git push origin vX.Y.Z`.
-2. **Prebuilt download archives (optional):** `goreleaser release --clean` (needs `GITHUB_TOKEN`) attaches darwin arm64/amd64 tarballs + `checksums.txt` to the GitHub release. Independent of Homebrew.
-3. **Update Homebrew:** in [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap), run `./bump-formula.sh vX.Y.Z` — it fetches the tag's source-tarball `sha256`, rewrites `Formula/nerve.rb`, commits, and pushes. `brew install mascah/tap/nerve` then builds from source (no signing/notarization; works on Linux too).
+Releases are automated by [release-please](https://github.com/googleapis/release-please) + [goreleaser](https://goreleaser.com/), driven entirely by [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major). The whole pipeline lives in `.github/workflows/release.yml`:
+
+1. **Just merge PRs to `main` as usual.** On every push to `main`, release-please opens (or updates) a **release PR** that bumps the version and rewrites `CHANGELOG.md` from the commits since the last release.
+2. **Merge the release PR.** Everything else is automatic, in one workflow run:
+   - release-please creates the `vX.Y.Z` tag *and* the GitHub Release (notes drawn from `CHANGELOG.md`).
+   - goreleaser builds the darwin/linux × arm64/amd64 tarballs + `checksums.txt` and **attaches them to that release** without touching the notes (`release.mode: keep-existing`, its changelog disabled — so the two tools never fight over the changelog).
+   - `scripts/update-tap-formula.sh` then regenerates `Formula/nerve.rb` in [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap) from those archives' checksums and pushes it. `brew install mascah/tap/nerve` is now an instant prebuilt-binary install (no compile, no Go toolchain; macOS + Linux). We write the formula ourselves because goreleaser removed formula generation (`brews`) in v2.16 and only emits casks now — and a prebuilt-binary *formula* avoids both the cask quarantine/Gatekeeper hack and the macOS-only limitation.
+
+That's it — no manual tagging, no `bump-formula.sh`, no source-tarball `sha256` step.
+
+### One-time setup
+
+- **`HOMEBREW_TAP_GITHUB_TOKEN`** repo secret — a fine-grained PAT with **Contents: read & write** on `mascah/homebrew-tap` (the workflow's built-in `GITHUB_TOKEN` is scoped to this repo only, so it can't push to the tap). Create it at *GitHub → Settings → Developer settings → Fine-grained tokens*, restricted to that one repo, then add it under *this repo → Settings → Secrets and variables → Actions*.
+- No PAT is needed for the release itself: release-please and goreleaser run as two steps of one job, because a tag pushed by the default `GITHUB_TOKEN` won't trigger a separate `on: push: tags` workflow.
+
+A local `goreleaser release --clean` (needs both tokens in the env) still works for ad-hoc runs, but the CI path above is the supported one.
