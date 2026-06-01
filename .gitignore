@@ -12,3 +12,6 @@
 .nerve/*.lock
 # Added by nerve
 .claude/settings.local.json
+# Demo authoring sources (not published). The rendered docs/demo.gif is a
+# separate path and IS tracked (via Git LFS — see .gitattributes).
+docs/demo/

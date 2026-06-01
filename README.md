@@ -1,23 +1,25 @@
-<!-- TODO: demo gif/asciinema — see issue -->
-<!-- Caption: two parallel worktrees (feat-auth, feat-payments) each with Django, Postgres, and Vite
-     running on deterministic, non-conflicting port sets — no manual config required. -->
-
 # nerve
 
 [![CI](https://github.com/mascah/nerve/actions/workflows/ci.yml/badge.svg)](https://github.com/mascah/nerve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Runtime isolation for git worktrees.** Give every parallel worktree its own non-conflicting ports, env files, and dotfiles — for any AI coding agent (Claude Code, Codex, Cursor, …) or plain manual use.
+![nerve — an agent brings a full docker compose stack up in a fresh worktree, running clean alongside another worktree](docs/demo.gif)
+
+**Run your whole stack in every parallel worktree.** nerve lets an AI coding agent spin up git worktrees on the fly and bring your full stack up in each one — `docker compose` with a dozen containers, dev servers, `direnv` — with zero per-worktree config and no port collisions. Harness-agnostic core for any agent (Claude Code, Codex, Cursor, …) or plain manual use; first-class Claude Code integration.
 
 ## The problem
 
-Git worktrees let you run multiple branches in parallel. Great. Except the moment you spin up `feat-auth` and `feat-payments` side by side, both want port 8000 for Django, 5432 for Postgres, and 5173 for Vite. Both need a `.env`. Tools that create worktrees punt on the runtime environment — you're left patching ports by hand, or writing fragile scripts that break across machines.
+Creating a worktree is the easy part — *running* it is where things break. The moment an agent spins up a second worktree and runs `docker compose up`, everything collides: both worktrees want the same Postgres, Redis, and app ports; `.env` isn't there; direnv silently doesn't apply. Tools that create worktrees punt on the runtime environment, so you're left patching ports by hand or writing fragile scripts that break across machines.
 
 ## What nerve does
 
-nerve solves the environment problem. For each new worktree it:
+With nerve installed, Claude can call `EnterWorktree` mid-session, run your full `docker compose` stack in that worktree, and it runs clean — in parallel with every other worktree, with direnv and `.env` intact. You stop thinking about ports.
 
-1. **Allocates a stable, unique port set** — offset-based, not random. Worktree 3's Django is always `8003`. URLs are predictable; bookmarks don't break.
+> Mid-session `EnterWorktree` worktrees need a one-time `nerve hooks install --bash-preamble` so per-command env (ports + direnv) loads into the session. See [Claude Code](#claude-code) for why.
+
+For each new worktree it:
+
+1. **Allocates a non-conflicting port set** so the whole stack can come up alongside your other worktrees — offset-based, not random (see [Predictable, explicit ports](#predictable-explicit-ports)).
 2. **Copies dotfiles** (`.env`, `.npmrc`, etc.) you declare in `clone_files`.
 3. **Renders templates** with per-worktree port vars so every worktree gets its own `.env.local`.
 4. **Runs bootstrap hooks** (`post_create`) — `uv sync`, `pnpm install`, `bundle install` — instead of copying gigantic directories between worktrees.
@@ -25,9 +27,9 @@ nerve solves the environment problem. For each new worktree it:
 
 The harness-agnostic core (`nerve new`) works standalone. A first-class Claude Code integration is available separately (see [Integrations](#integrations)).
 
-## Differentiator: stable, offset-based ports
+## Predictable, explicit ports
 
-For offset N in `[1, pool_size]`, each service's port is `base_port + project_offset + N`. This is deliberate:
+Collision-free ports are the point; making them *predictable* is the bonus. Other tools hash branch names into the port range; nerve uses explicit offset arithmetic instead. For offset N in `[1, pool_size]`, each service's port is `base_port + project_offset + N` — same collision-avoidance, but deterministic:
 
 - **Predictable URLs.** Worktree 3's services are always at offset 3 — bookmark `http://localhost:8003`, share it with a teammate, and it still works tomorrow.
 - **No port thrash.** Restarting a worktree or re-running `nerve env` doesn't reassign ports.
