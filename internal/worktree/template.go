@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mascah/nerve/internal/config"
+	"github.com/mascah/nerve/internal/envfile"
 )
 
 // renderTemplates applies each template entry from cfg.Templates against srcRoot,
@@ -54,6 +56,56 @@ func renderTemplates(srcRoot, dstRoot string, cfg *config.ProjectConfig, tmplVar
 		}
 	}
 	return nil
+}
+
+// RenderEnv (re)renders a worktree's templates and rewrites its .env.local from
+// the project config: per-service ports plus static vars (each value run through
+// the {{...}} engine with branch/project/worktree_path/branch_slug + ports.<id>
+// in scope). It deliberately does NOT copy clone_files — those are one-time copies
+// made at create. Create and `nerve refresh` both call this so the two paths can't
+// drift. Returns the env map so callers can reuse it (e.g. for hook environments).
+func RenderEnv(repoRoot, worktreePath, branch, project, branchSlug string, portByService map[string]int, cfg *config.ProjectConfig, log io.Writer) (map[string]string, error) {
+	if log == nil {
+		log = io.Discard
+	}
+	tmplVars := map[string]string{
+		"branch":        branch,
+		"project":       project,
+		"worktree_path": worktreePath,
+		"branch_slug":   branchSlug,
+	}
+	for id, p := range portByService {
+		tmplVars["ports."+id] = strconv.Itoa(p)
+	}
+
+	if len(cfg.Templates) > 0 {
+		fmt.Fprintln(log, "rendering templates:")
+		if err := renderTemplates(repoRoot, worktreePath, cfg, tmplVars, log); err != nil {
+			return nil, err
+		}
+	}
+
+	// .env.local = per-service ports + static vars. Vars render through the same
+	// {{...}} engine as templates, so a value can interpolate ports.<id> etc.
+	envVars := make(map[string]string, len(cfg.Services)+len(cfg.Vars))
+	for i := range cfg.Services {
+		svc := &cfg.Services[i]
+		envVars[svc.EnvKey] = strconv.Itoa(portByService[svc.ID])
+	}
+	for i := range cfg.Vars {
+		v := &cfg.Vars[i]
+		rendered, err := config.RenderTemplateBody(v.Value, tmplVars)
+		if err != nil {
+			return nil, fmt.Errorf("render var %s: %w", v.EnvKey, err)
+		}
+		envVars[v.EnvKey] = rendered
+	}
+	envPath := filepath.Join(worktreePath, ".env.local")
+	if err := envfile.WriteFile(envPath, envVars); err != nil {
+		return nil, fmt.Errorf("write .env.local: %w", err)
+	}
+	fmt.Fprintf(log, "wrote %s\n", envPath)
+	return envVars, nil
 }
 
 func mergedSuffix(m bool) string {

@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mascah/nerve/internal/clone"
 	"github.com/mascah/nerve/internal/config"
-	"github.com/mascah/nerve/internal/envfile"
 	"github.com/mascah/nerve/internal/gitutil"
 	"github.com/mascah/nerve/internal/hookstatus"
 	"github.com/mascah/nerve/internal/leases"
@@ -240,18 +238,7 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	res.PrimaryPort = allocation.PrimaryPort
 	res.PortByService = allocation.PortByService
 
-	// Build template vars (ports.<id> + branch/project/worktree_path/branch_slug).
-	tmplVars := map[string]string{
-		"branch":        opts.Branch,
-		"project":       projectName,
-		"worktree_path": worktreePath,
-		"branch_slug":   branchSlug,
-	}
-	for id, p := range allocation.PortByService {
-		tmplVars["ports."+id] = strconv.Itoa(p)
-	}
-
-	// Copy clone_files.
+	// Copy clone_files (one-time at create; refresh deliberately does not re-copy).
 	if len(cfg.CloneFiles) > 0 {
 		fmt.Fprintln(log, "copying clone_files:")
 		cres, err := clone.Run(opts.RepoRoot, worktreePath, cfg.CloneFiles)
@@ -266,36 +253,12 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		}
 	}
 
-	// Render templates.
-	if len(cfg.Templates) > 0 {
-		fmt.Fprintln(log, "rendering templates:")
-		if err := renderTemplates(opts.RepoRoot, worktreePath, cfg, tmplVars, log); err != nil {
-			return res, err
-		}
+	// Render templates + write .env.local (per-service ports + static vars).
+	// Shared with `nerve refresh` via RenderEnv so the two paths can't drift.
+	envVars, err := RenderEnv(opts.RepoRoot, worktreePath, opts.Branch, projectName, branchSlug, allocation.PortByService, cfg, log)
+	if err != nil {
+		return res, err
 	}
-
-	// Write .env.local with per-service ports + static vars.
-	envVars := make(map[string]string, len(cfg.Services)+len(cfg.Vars))
-	for i := range cfg.Services {
-		svc := &cfg.Services[i]
-		envVars[svc.EnvKey] = strconv.Itoa(allocation.PortByService[svc.ID])
-	}
-	// Static vars render through the same {{...}} engine as templates. tmplVars
-	// already holds branch/project/worktree_path + ports.<id> (built above), so a
-	// var value can interpolate any of them — e.g. value: "{{ports.postgres}}".
-	for i := range cfg.Vars {
-		v := &cfg.Vars[i]
-		rendered, err := config.RenderTemplateBody(v.Value, tmplVars)
-		if err != nil {
-			return res, fmt.Errorf("render var %s: %w", v.EnvKey, err)
-		}
-		envVars[v.EnvKey] = rendered
-	}
-	envPath := filepath.Join(worktreePath, ".env.local")
-	if err := envfile.WriteFile(envPath, envVars); err != nil {
-		return res, fmt.Errorf("write .env.local: %w", err)
-	}
-	fmt.Fprintf(log, "wrote %s\n", envPath)
 
 	// Run post_create hooks with the allocated ports + identity vars in their
 	// environment, so setup scripts (migrations, installers) can read them. We expose

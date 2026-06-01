@@ -11,7 +11,7 @@ A hands-on walkthrough of every nerve feature against a throwaway demo repo. Eac
 
 ### Build the binary
 ```bash
-cd ~/GitHub/mascah/nerve            # or wherever nerve lives
+cd /path/to/nerve                   # wherever you cloned it
 make build
 ./bin/nerve version                 # → da4ab10-dirty or similar
 ```
@@ -284,10 +284,12 @@ nerve doctor                       # → "• N leftover item(s) in .nerve/trash
 nerve gc demo                      # → "cleared N item(s) (…) from .nerve/trash"
 ```
 
-### Refresh after editing services
-1. Add a new service to `.nerve/config.yaml` (e.g. `redis`, base_port 6379, env_key `REDIS_PORT`).
+### Refresh after editing services, vars, or templates
+1. Edit `.nerve/config.yaml`: add a new service (e.g. `redis`, base_port 6379, env_key `REDIS_PORT`), add a `vars` entry (e.g. `{ env_key: WORKTREE_TAG, value: "{{branch}}-{{ports.redis}}" }`), and change a `templates` source.
 2. `cd` into a worktree and run `nerve refresh`.
-3. Cat `.env.local` — the new key should appear with the correct offset.
+3. Cat `.env.local`: the new service key appears with the correct offset, **and** the `vars` entry is (re-)rendered (`WORKTREE_TAG=feat-configured-<port>`). Any `templates` are re-rendered too.
+
+`nerve refresh` writes the same artifacts `nerve new` does — per-service ports **+ static `vars` + `templates`** (both go through the shared `worktree.RenderEnv`, so the two paths can't drift). It deliberately does **not** re-copy `clone_files`, which are one-time copies made at create.
 
 ---
 
@@ -483,7 +485,3 @@ unset XDG_CONFIG_HOME
 - **`claude --worktree` lands in `.claude/worktrees/...` instead of `.worktrees/...`** → hooks aren't installed (or aren't installed in the right scope). Run `nerve hooks install --project` from the repo root.
 - **Env vars don't appear inside a Claude session running in a worktree** → make sure the worktree has its own `.claude/settings.local.json` (nerve auto-copies it on create; if you created a worktree before installing nerve hooks, manually copy it from the main checkout or recreate the worktree).
 - **`nerve doctor` reports stale allocations** → run `nerve ports cleanup --project <name>`.
-
-## Re-running the automated smoke test
-
-There's a non-interactive smoke script at `$CLAUDE_JOB_DIR/smoke.sh` (during a Claude session) that exercises sections 0–6 automatically against a temp repo. It's the same scenarios as this walkthrough; use the walkthrough when you want to *see* what's happening, the script when you want a fast regression check.
