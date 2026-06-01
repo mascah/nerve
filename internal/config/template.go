@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// RenderPath substitutes {branch}, {project}, {worktree_id} (and any caller-supplied
-// keys) inside a path template. It deliberately does NOT support Go templating —
-// keep it dumb and predictable.
+// RenderPath substitutes {key} for each entry in vars inside a path template
+// (callers pass branch, project, branch_slug, worktree_path, etc.). It deliberately
+// does NOT support Go templating — keep it dumb and predictable.
 //
 //	RenderPath(".worktrees/{branch}", map[string]string{"branch": "feat-foo"})
 //	-> ".worktrees/feat-foo"
