@@ -46,10 +46,10 @@ cd nerve
 make install   # → $GOPATH/bin/nerve
 ```
 
-**Homebrew** *(coming soon — no tap exists yet; use build-from-source for now)*:
+**Homebrew** (builds from source; pulls a Go toolchain if you don't have one):
 
 ```bash
-# brew install mascah/tap/nerve   # not yet available
+brew install mascah/tap/nerve
 ```
 
 **Download a release archive:**
@@ -232,8 +232,6 @@ Because not everyone on your team will have nerve installed, `nerve hooks instal
 
 ## Releasing
 
-```bash
-goreleaser release --clean
-```
-
-Builds darwin arm64 + amd64 binaries. The Homebrew tap stanza in `.goreleaser.yaml` is commented out until `mascah/homebrew-tap` is published.
+1. **Tag and push:** `git tag vX.Y.Z && git push origin vX.Y.Z`.
+2. **Prebuilt download archives (optional):** `goreleaser release --clean` (needs `GITHUB_TOKEN`) attaches darwin arm64/amd64 tarballs + `checksums.txt` to the GitHub release. Independent of Homebrew.
+3. **Update Homebrew:** in [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap), run `./bump-formula.sh vX.Y.Z` — it fetches the tag's source-tarball `sha256`, rewrites `Formula/nerve.rb`, commits, and pushes. `brew install mascah/tap/nerve` then builds from source (no signing/notarization; works on Linux too).

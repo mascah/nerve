@@ -22,7 +22,7 @@ make dev ARGS="..."  # go run ./cmd/nerve <args>
 
 Run a single test: `go test ./internal/hooks -run TestInstall`. Most packages have focused `_test.go` files (`hooks`, `ports`, `config`, `envfile`, `tui`).
 
-Release: `goreleaser release --clean` (darwin arm64+amd64; the Homebrew tap stanza in `.goreleaser.yaml` is commented out until `mascah/homebrew-tap` exists).
+Release: tag `vX.Y.Z` + push, then bump `url`+`sha256` in the [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap) formula (`brew install mascah/tap/nerve` builds from source — no signing). `goreleaser release --clean` optionally builds darwin arm64+amd64 archives for direct download; it no longer publishes to Homebrew.
 
 ## End-to-end smoke
 

@@ -47,17 +47,11 @@ changelog:
       - "^chore:"
       - "^ci:"
 
-# Homebrew tap publishing. Uncomment + adjust once mascah/homebrew-tap exists.
-# brews:
-#   - name: nerve
-#     repository:
-#       owner: mascah
-#       name: homebrew-tap
-#       branch: main
-#     homepage: "https://github.com/mascah/nerve"
-#     description: "Worktree manager with Claude Code integration"
-#     license: "MIT"
-#     install: |
-#       bin.install "nerve"
-#     test: |
-#       system "#{bin}/nerve", "version"
+# Homebrew is intentionally NOT handled here. nerve ships via a hand-maintained
+# build-from-source formula at github.com/mascah/homebrew-tap (Formula/nerve.rb):
+# `brew install mascah/tap/nerve` compiles from source on the user's machine, so
+# there's no code-signing, no Gatekeeper quarantine workaround, and Linux works
+# too. Bump that formula's `url` tag + `sha256` on each release.
+#
+# Everything above is kept only for building downloadable release archives, which
+# are optional and independent of the Homebrew path.
