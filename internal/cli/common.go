@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -80,17 +79,6 @@ func resolveProjectByCwd(cwd string) (*config.ProjectEntry, *config.GlobalRegist
 // printErr is a helper for commands that want non-default exit codes.
 func printErr(cmd *cobra.Command, msg string) {
 	fmt.Fprintln(cmd.ErrOrStderr(), "nerve:", msg)
-}
-
-// progressWriter returns the stderr stream when verbose is set, else io.Discard.
-// All commands accept the persistent --verbose / -v flag from root.
-func progressWriter(cmd *cobra.Command) io.Writer {
-	v, _ := cmd.Flags().GetBool("verbose")
-	if !v {
-		// Quiet — most users get a tidy summary; verbose gets a play-by-play.
-		return io.Discard
-	}
-	return cmd.ErrOrStderr()
 }
 
 // loadProjectConfigOrLightweight loads the per-project config or returns (nil, nil)

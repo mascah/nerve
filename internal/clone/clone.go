@@ -124,7 +124,7 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := io.Copy(tmp, in); err != nil {
 		tmp.Close()

@@ -63,14 +63,10 @@ func listPathSuggestions(repoRoot, query string, max int) []string {
 
 	var out []string
 	scanned := 0
-	// rootDepth is the depth of scanRoot below repoRoot; we add it to the
-	// per-walk depth so the overall depth ceiling is relative to repoRoot.
-	rootDepth := 0
-	if dirPart != "" {
-		rootDepth = strings.Count(strings.Trim(dirPart, "/"), "/") + 1
-	}
 
-	walkErr := filepath.WalkDir(scanRoot, func(path string, d fs.DirEntry, err error) error {
+	// Walk errors (unreadable subtrees, a vanished scanRoot, etc.) are non-fatal:
+	// we return whatever entries we managed to collect before the error.
+	_ = filepath.WalkDir(scanRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Quietly skip unreadable subtrees rather than failing the whole walk.
 			if d != nil && d.IsDir() {
@@ -111,7 +107,6 @@ func listPathSuggestions(repoRoot, query string, max int) []string {
 		// Only suggest entries that live directly inside scanRoot — i.e. at
 		// the level the user is currently typing. Deeper entries will surface
 		// once the user types another "/".
-		_ = rootDepth
 		parent := filepath.Dir(path)
 		if parent != scanRoot {
 			return nil
@@ -128,10 +123,6 @@ func listPathSuggestions(repoRoot, query string, max int) []string {
 		out = appendUnique(out, entry)
 		return nil
 	})
-	if walkErr != nil && walkErr != filepath.SkipAll {
-		// Walk reported an unrecoverable error before producing anything
-		// useful; return whatever we managed to collect.
-	}
 
 	sort.Slice(out, func(i, j int) bool {
 		// Directories first, then alphabetical (case-insensitive).

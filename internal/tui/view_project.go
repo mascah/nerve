@@ -121,7 +121,7 @@ func (v *projectView) Update(msg tea.Msg) tea.Cmd {
 		v.removing = false
 		v.status = ""
 		if m.err != nil {
-			return func() tea.Msg { return errMsg{m.err} }
+			return func() tea.Msg { return errMsg(m) }
 		}
 		// Refresh the list off the UI loop now that a worktree is gone.
 		v.loadingWorktrees = true
@@ -548,10 +548,10 @@ func (v *projectView) renderWorktrees() string {
 		}
 		line := fmt.Sprintf("  %-24s  %-13s  %-44s  %-18s  %s",
 			w.Branch, port, w.Path, w.State, hookStateLabel(w.HookState))
-		switch {
-		case i == v.confirmIdx:
+		switch i {
+		case v.confirmIdx:
 			b.WriteString(statusErr.Render("▸ " + strings.TrimPrefix(line, "  ")))
-		case i == v.cursors[tabWorktrees]:
+		case v.cursors[tabWorktrees]:
 			b.WriteString(selectedRow.Render("▸ " + strings.TrimPrefix(line, "  ")))
 		default:
 			b.WriteString(line)
