@@ -1,0 +1,54 @@
+name: Release
+
+# Two-stage release pipeline, both stages in ONE workflow so no PAT is needed
+# (a tag pushed by GITHUB_TOKEN does NOT trigger a separate `on: push: tags`
+# workflow — GitHub suppresses that to avoid recursion):
+#
+#   1. release-please reads conventional commits on main and maintains a
+#      "release PR" that bumps the version + updates CHANGELOG.md. Merging that
+#      PR creates the git tag AND the GitHub Release (notes from CHANGELOG.md).
+#   2. In the SAME run, when (and only when) a release was just created,
+#      goreleaser builds the darwin arm64/amd64 archives + checksums and uploads
+#      them onto the release release-please already made (release.mode:
+#      keep-existing in .goreleaser.yaml — it never touches the notes).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Stage 1: maintain the release PR / cut the release on merge.
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stage 2: only when a release was just cut, build + attach artifacts.
+      - name: Checkout
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run goreleaser
+        if: ${{ steps.release.outputs.release_created }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

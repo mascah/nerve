@@ -37,15 +37,20 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
 
+# release-please owns the changelog and the GitHub Release.
+#
+# release-please maintains CHANGELOG.md from conventional commits and creates the
+# GitHub Release (with notes drawn from that changelog) when its PR is merged.
+# goreleaser runs afterwards purely to attach build artifacts, so:
+#   - changelog generation is disabled here (no duplicate, divergent notes), and
+#   - release.mode is keep-existing so goreleaser uploads onto the existing
+#     release without overwriting release-please's notes.
+# This is the single point that resolves the "two tools, one changelog" overlap.
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
-      - "^ci:"
+  disable: true
+
+release:
+  mode: keep-existing
 
 # Homebrew is intentionally NOT handled here. nerve ships via a hand-maintained
 # build-from-source formula at github.com/mascah/homebrew-tap (Formula/nerve.rb):

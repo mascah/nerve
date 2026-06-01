@@ -232,6 +232,12 @@ Because not everyone on your team will have nerve installed, `nerve hooks instal
 
 ## Releasing
 
-1. **Tag and push:** `git tag vX.Y.Z && git push origin vX.Y.Z`.
-2. **Prebuilt download archives (optional):** `goreleaser release --clean` (needs `GITHUB_TOKEN`) attaches darwin arm64/amd64 tarballs + `checksums.txt` to the GitHub release. Independent of Homebrew.
+Releases are automated by [release-please](https://github.com/googleapis/release-please) + [goreleaser](https://goreleaser.com/), driven entirely by [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major). The whole pipeline lives in `.github/workflows/release.yml`:
+
+1. **Just merge PRs to `main` as usual.** On every push to `main`, release-please opens (or updates) a **release PR** that bumps the version and rewrites `CHANGELOG.md` from the commits since the last release.
+2. **Merge the release PR.** That creates the `vX.Y.Z` tag *and* the GitHub Release (notes drawn from `CHANGELOG.md`). In the same workflow run, goreleaser then builds the darwin arm64/amd64 tarballs + `checksums.txt` and **attaches them to that release** — it does not touch the notes (`release.mode: keep-existing`, changelog generation disabled, so the two tools never fight over the changelog).
 3. **Update Homebrew:** in [mascah/homebrew-tap](https://github.com/mascah/homebrew-tap), run `./bump-formula.sh vX.Y.Z` — it fetches the tag's source-tarball `sha256`, rewrites `Formula/nerve.rb`, commits, and pushes. `brew install mascah/tap/nerve` then builds from source (no signing/notarization; works on Linux too).
+
+> No PAT is required: release-please and goreleaser run as two steps of one job, because a tag pushed by the default `GITHUB_TOKEN` will not trigger a separate `on: push: tags` workflow.
+
+A local `goreleaser release --clean` (needs `GITHUB_TOKEN`) still works for ad-hoc archive builds, but the CI path above is the supported one.
