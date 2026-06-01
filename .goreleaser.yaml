@@ -12,8 +12,14 @@ builds:
     binary: nerve
     env:
       - CGO_ENABLED=0
+    # Pure Go, no cgo — cross-compiles cleanly to every target below. darwin/arm64
+    # binaries are ad-hoc signed by the Go linker, and Homebrew strips the
+    # quarantine xattr on install, so prebuilt CLI binaries run without a Developer
+    # ID or notarization. Linux is included so the Homebrew tap formula installs a
+    # prebuilt binary there too (no compile, no Go toolchain needed).
     goos:
       - darwin
+      - linux
     goarch:
       - arm64
       - amd64
@@ -52,11 +58,11 @@ changelog:
 release:
   mode: keep-existing
 
-# Homebrew is intentionally NOT handled here. nerve ships via a hand-maintained
-# build-from-source formula at github.com/mascah/homebrew-tap (Formula/nerve.rb):
-# `brew install mascah/tap/nerve` compiles from source on the user's machine, so
-# there's no code-signing, no Gatekeeper quarantine workaround, and Linux works
-# too. Bump that formula's `url` tag + `sha256` on each release.
-#
-# Everything above is kept only for building downloadable release archives, which
-# are optional and independent of the Homebrew path.
+# Homebrew is intentionally NOT generated here. goreleaser removed formula
+# generation (`brews`) in v2.16 and only generates casks now — but a cask of an
+# unsigned binary needs a quarantine-stripping hack and is macOS-only. We instead
+# ship a prebuilt-binary *formula* (`brew install mascah/tap/nerve`, no `--cask`,
+# no quarantine flag, works on macOS + Linux). goreleaser's job ends at building
+# the binaries/archives above and uploading them to the release; the release
+# workflow's `scripts/update-tap-formula.sh` step then writes Formula/nerve.rb in
+# github.com/mascah/homebrew-tap from those archives' checksums and pushes it.

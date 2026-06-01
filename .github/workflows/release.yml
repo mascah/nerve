@@ -51,4 +51,20 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # Scoped to THIS repo: builds the binaries/archives and uploads them +
+          # checksums.txt onto the release. goreleaser does NOT touch the tap.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Owns the Homebrew formula ourselves (goreleaser removed `brews` in v2.16).
+      # Runs after goreleaser so the archives + checksums.txt exist on the release;
+      # writes Formula/nerve.rb from those checksums and pushes it to the tap.
+      - name: Update Homebrew tap formula
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          # Reads this repo's release assets (checksums.txt) via `gh`.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PAT with contents:write on mascah/homebrew-tap — the
+          # built-in GITHUB_TOKEN is scoped to this repo and can't push there.
+          # Set this secret in repo settings — see README "Releasing".
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: ./scripts/update-tap-formula.sh "${{ steps.release.outputs.tag_name }}"
