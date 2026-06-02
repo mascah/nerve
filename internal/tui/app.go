@@ -132,7 +132,11 @@ func branchForWorktree(mainCheckout, wtPath string) string {
 	return ""
 }
 
-func (a *App) Init() tea.Cmd { return nil }
+func (a *App) Init() tea.Cmd {
+	// Load per-project status off the UI loop. newProjectsView only built skeleton rows
+	// (name/path) so the event loop never blocked on git/registry I/O at startup.
+	return a.projects.loadCmd()
+}
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
@@ -208,12 +212,15 @@ func (a *App) switchTo(msg switchViewMsg) (tea.Model, tea.Cmd) {
 	a.view = msg.to
 	switch msg.to {
 	case viewProjects:
-		// Refresh on return.
+		// Refresh on return. newProjectsView builds skeleton rows synchronously (cheap
+		// global-registry read); the per-project status loads off the UI loop via loadCmd
+		// so returning to the list never blocks the event loop.
 		pv, err := newProjectsView()
 		if err != nil {
 			return a, func() tea.Msg { return errMsg{err} }
 		}
 		a.projects = pv
+		return a, a.projects.loadCmd()
 	case viewAddProject:
 		a.addProject = newAddProjectView()
 	case viewProject:
@@ -229,7 +236,7 @@ func (a *App) switchTo(msg switchViewMsg) (tea.Model, tea.Cmd) {
 		// Load worktrees eagerly off the UI loop so the count shows on the tab label
 		// without the user having to tab onto the Worktrees tab (and without freezing
 		// the UI while git forks subprocesses).
-		a.project.loadingWorktrees = true
+		a.project.worktrees.begin()
 		return a, a.project.loadWorktreesCmd()
 	case viewAddService:
 		repoRoot, ok := msg.payload.(string)

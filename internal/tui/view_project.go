@@ -2,15 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"io"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mascah/nerve/internal/config"
-	"github.com/mascah/nerve/internal/hookstatus"
-	"github.com/mascah/nerve/internal/worktree"
 )
 
 // tab indices for projectView. Keep these in sync with tabNames and the cursors array.
@@ -51,13 +48,9 @@ type projectView struct {
 	tab     int
 	cursors [5]int
 
-	// Worktree tab state.
-	worktrees []worktreeRow
-	// loadedWorktrees is true once an async load has completed (success or error).
-	loadedWorktrees bool
-	// loadingWorktrees is true while a load command is in flight; drives the
-	// "loading…" placeholder and the "(…)" tab-label count.
-	loadingWorktrees bool
+	// Worktree tab state. Rows load eagerly off the UI loop when the view opens
+	// (loadWorktreesCmd) so the count shows on the tab label without tabbing in.
+	worktrees asyncList[worktreeRow]
 	// removing is true while a worktree.Remove command is in flight; guards against
 	// double-firing on repeated keypresses.
 	removing bool
@@ -71,12 +64,7 @@ type projectView struct {
 	// Ports tab state. Probing pool_size×services ports must never run on the UI loop,
 	// so the rows load lazily (on first focus) via loadPortsCmd, mirroring the worktree
 	// tab's async pattern.
-	ports []portsRow
-	// loadedPorts is true once a probe sweep has completed (success or error).
-	loadedPorts bool
-	// loadingPorts is true while a probe command is in flight; drives the
-	// "loading ports…" placeholder.
-	loadingPorts bool
+	ports asyncList[portsRow]
 }
 
 var tabNames = []string{"Services", "Clone Files", "Templates", "Worktrees", "Ports"}
@@ -103,19 +91,17 @@ func (v *projectView) Update(msg tea.Msg) tea.Cmd {
 	// type-assertion below drops everything that isn't a keypress.
 	switch m := msg.(type) {
 	case worktreesLoadedMsg:
-		v.loadingWorktrees = false
-		v.loadedWorktrees = true
 		if m.err != nil {
-			v.worktrees = nil
+			v.worktrees.fail()
 			v.status = "error: " + m.err.Error()
 		} else {
-			v.worktrees = m.rows
+			v.worktrees.set(m.rows)
 			// Drop a stale load error now that we have fresh rows.
 			if strings.HasPrefix(v.status, "error: ") {
 				v.status = ""
 			}
 		}
-		v.clampWorktreeCursor()
+		v.cursors[tabWorktrees] = v.worktrees.clamp(v.cursors[tabWorktrees])
 		return nil
 	case worktreeRemovedMsg:
 		v.removing = false
@@ -124,21 +110,19 @@ func (v *projectView) Update(msg tea.Msg) tea.Cmd {
 			return func() tea.Msg { return errMsg(m) }
 		}
 		// Refresh the list off the UI loop now that a worktree is gone.
-		v.loadingWorktrees = true
+		v.worktrees.begin()
 		return v.loadWorktreesCmd()
 	case portsLoadedMsg:
-		v.loadingPorts = false
-		v.loadedPorts = true
 		if m.err != nil {
-			v.ports = nil
+			v.ports.fail()
 			v.status = "error: " + m.err.Error()
 		} else {
-			v.ports = m.rows
+			v.ports.set(m.rows)
 			if strings.HasPrefix(v.status, "error: ") {
 				v.status = ""
 			}
 		}
-		v.clampPortsCursor()
+		v.cursors[tabPorts] = v.ports.clamp(v.cursors[tabPorts])
 		return nil
 	}
 
@@ -212,8 +196,8 @@ func (v *projectView) Update(msg tea.Msg) tea.Cmd {
 	case "r":
 		// Re-probe the pool while on the Ports tab (a running dev server may have come
 		// up or gone away since the last sweep). No-op on other tabs.
-		if v.tab == tabPorts && !v.loadingPorts {
-			v.loadingPorts = true
+		if v.tab == tabPorts && !v.ports.loading {
+			v.ports.begin()
 			return v.loadPortsCmd()
 		}
 	}
@@ -224,10 +208,10 @@ func (v *projectView) Update(msg tea.Msg) tea.Cmd {
 // Ports tab. Returns nil when not on the Ports tab or when the rows are already loaded /
 // loading. Mirrors the worktree-tab async pattern so the UI loop never blocks on probing.
 func (v *projectView) focusPortsIfNeeded() tea.Cmd {
-	if v.tab != tabPorts || v.loadedPorts || v.loadingPorts {
+	if v.tab != tabPorts || v.ports.loaded || v.ports.loading {
 		return nil
 	}
-	v.loadingPorts = true
+	v.ports.begin()
 	return v.loadPortsCmd()
 }
 
@@ -240,9 +224,9 @@ func (v *projectView) tabLen() int {
 	case tabTemplates:
 		return len(v.cfg.Templates)
 	case tabWorktrees:
-		return len(v.worktrees)
+		return v.worktrees.len()
 	case tabPorts:
-		return len(v.ports)
+		return v.ports.len()
 	}
 	return 0
 }
@@ -272,61 +256,6 @@ func (v *projectView) deleteCurrent() error {
 	return config.SaveProjectConfig(v.path, v.cfg)
 }
 
-// handleWorktreeDelete implements the two-press confirmation for removing a worktree.
-// First press arms confirmation (warning on the file count when dirty); second press
-// (on the same row) kicks off an async worktree.Remove so the UI loop never blocks.
-func (v *projectView) handleWorktreeDelete() tea.Cmd {
-	// Ignore further presses while a removal is already in flight.
-	if v.removing {
-		return nil
-	}
-	idx := v.cursors[tabWorktrees]
-	if idx < 0 || idx >= len(v.worktrees) {
-		return nil
-	}
-	row := v.worktrees[idx]
-	if v.confirmIdx != idx {
-		v.confirmIdx = idx
-		if row.DirtyCount > 0 {
-			v.status = fmt.Sprintf("⚠ %s has %d uncommitted changes — press d again to delete anyway, esc to cancel",
-				row.Branch, row.DirtyCount)
-		} else {
-			v.status = "press d again to confirm removal, esc to cancel"
-		}
-		return nil
-	}
-	// Confirmed — run the removal off the UI loop. worktree.Remove forks git and runs
-	// pre_remove hooks, so doing it inline here would hang the whole TUI.
-	v.confirmIdx = -1
-	v.removing = true
-	v.status = fmt.Sprintf("removing %s…", row.Branch)
-	repoRoot, cfg := v.path, v.cfg
-	return func() tea.Msg {
-		_, err := worktree.Remove(worktree.RemoveOptions{
-			RepoRoot:     repoRoot,
-			WorktreePath: row.Path,
-			Branch:       row.Branch,
-			Cfg:          cfg,
-			Force:        true,
-			Log:          io.Discard,
-		})
-		return worktreeRemovedMsg{err: err}
-	}
-}
-
-// clearConfirm drops any pending d-press confirmation. Called on cursor movement
-// or tab changes so the user can't accidentally confirm against a different row.
-// Leaves an in-flight "removing…" status alone.
-func (v *projectView) clearConfirm() {
-	if v.removing {
-		return
-	}
-	if v.confirmIdx != -1 || v.status != "" {
-		v.confirmIdx = -1
-		v.status = ""
-	}
-}
-
 // loadWorktreesCmd returns a tea.Cmd that loads the worktree rows in a goroutine.
 // It captures path/cfg by value so the command is safe to run off the UI loop.
 func (v *projectView) loadWorktreesCmd() tea.Cmd {
@@ -334,14 +263,6 @@ func (v *projectView) loadWorktreesCmd() tea.Cmd {
 	return func() tea.Msg {
 		rows, err := loadWorktreeRows(repoRoot, cfg)
 		return worktreesLoadedMsg{rows: rows, err: err}
-	}
-}
-
-// clampWorktreeCursor keeps the Worktrees cursor within bounds after the row count
-// changes (e.g. after a removal refresh).
-func (v *projectView) clampWorktreeCursor() {
-	if v.cursors[tabWorktrees] >= len(v.worktrees) && v.cursors[tabWorktrees] > 0 {
-		v.cursors[tabWorktrees] = len(v.worktrees) - 1
 	}
 }
 
@@ -353,13 +274,6 @@ func (v *projectView) loadPortsCmd() tea.Cmd {
 	return func() tea.Msg {
 		rows, err := loadPortsRows(repoRoot, cfg)
 		return portsLoadedMsg{rows: rows, err: err}
-	}
-}
-
-// clampPortsCursor keeps the Ports cursor within bounds after the row count changes.
-func (v *projectView) clampPortsCursor() {
-	if v.cursors[tabPorts] >= len(v.ports) && v.cursors[tabPorts] > 0 {
-		v.cursors[tabPorts] = len(v.ports) - 1
 	}
 }
 
@@ -383,7 +297,7 @@ func (v *projectView) View() string {
 			count = len(v.cfg.Templates)
 		case tabWorktrees:
 			// Count is best-effort — only meaningful once loaded.
-			count = len(v.worktrees)
+			count = v.worktrees.len()
 		case tabPorts:
 			// The pool size is known synchronously from config, so the count is always
 			// meaningful (no pending ellipsis needed) regardless of probe state.
@@ -392,7 +306,7 @@ func (v *projectView) View() string {
 			}
 		}
 		var label string
-		if i == tabWorktrees && !v.loadedWorktrees {
+		if i == tabWorktrees && !v.worktrees.loaded {
 			// Worktrees load eagerly when the view opens; show a pending ellipsis until
 			// the async result lands so the user never has to tab on to see the count.
 			label = fmt.Sprintf("%s (…)", name)
@@ -418,7 +332,7 @@ func (v *projectView) View() string {
 	case tabWorktrees:
 		// No synchronous git work here — the list is loaded via loadWorktreesCmd off
 		// the UI loop. Show a placeholder until the async result lands.
-		if v.loadingWorktrees || !v.loadedWorktrees {
+		if v.worktrees.loading || !v.worktrees.loaded {
 			b.WriteString(muted.Render("loading worktrees…"))
 		} else {
 			b.WriteString(v.renderWorktrees())
@@ -427,7 +341,7 @@ func (v *projectView) View() string {
 		// Lightweight projects have no pool to visualize — show a hint, never probe.
 		if v.cfg.PrimaryService() == nil {
 			b.WriteString(muted.Render("no services configured — add services to see port allocations"))
-		} else if v.loadingPorts || !v.loadedPorts {
+		} else if v.ports.loading || !v.ports.loaded {
 			// Probing runs off the UI loop via loadPortsCmd; placeholder until it lands.
 			b.WriteString(muted.Render("loading ports…"))
 		} else {
@@ -531,127 +445,4 @@ func (v *projectView) renderTemplates() string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-func (v *projectView) renderWorktrees() string {
-	if len(v.worktrees) == 0 {
-		return muted.Render("no worktrees — use `nerve new <branch>` to create one")
-	}
-	var b strings.Builder
-	header := fmt.Sprintf("  %-24s  %-13s  %-44s  %-18s  %s", "BRANCH", "PRIMARY_PORT", "PATH", "STATE", "HOOKS")
-	b.WriteString(subtitleStyle.Render(header))
-	b.WriteString("\n")
-	for i, w := range v.worktrees {
-		port := "-"
-		if w.PrimaryPort > 0 {
-			port = fmt.Sprintf("%d", w.PrimaryPort)
-		}
-		line := fmt.Sprintf("  %-24s  %-13s  %-44s  %-18s  %s",
-			w.Branch, port, w.Path, w.State, hookStateLabel(w.HookState))
-		switch i {
-		case v.confirmIdx:
-			b.WriteString(statusErr.Render("▸ " + strings.TrimPrefix(line, "  ")))
-		case v.cursors[tabWorktrees]:
-			b.WriteString(selectedRow.Render("▸ " + strings.TrimPrefix(line, "  ")))
-		default:
-			b.WriteString(line)
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// hookStateLabel renders the backgrounded post_create hook phase for the HOOKS column.
-// Blank when there's no status (synchronous projects); a failed run is highlighted red.
-func hookStateLabel(s hookstatus.State) string {
-	switch s {
-	case hookstatus.StateRunning:
-		return statusWarn.Render("running…")
-	case hookstatus.StateFailed:
-		return statusErr.Render("failed")
-	case hookstatus.StateOK:
-		return statusOK.Render("✓")
-	default:
-		return ""
-	}
-}
-
-// portCellWidth is the fixed render width of one port cell ("●  8003"): a one-rune
-// marker, two spaces, and a right-padded port number. Keeps service columns aligned.
-const portCellWidth = 11
-
-// renderPorts draws the whole pool as a grid: one row per offset, columns for the
-// offset number, the holding branch (or "free"), and each service's resolved port with
-// a liveness marker (● in use / ○ free). A free offset row is muted; allocated rows are
-// normal. Cell color distinguishes an external squatter (listening on an offset nerve
-// did not allocate, red) from a nerve-allocated-but-idle port (warn) and a healthy
-// allocated-and-listening port (green).
-func (v *projectView) renderPorts() string {
-	if len(v.ports) == 0 {
-		return muted.Render("no port pool — set a pool_size and a primary service in .nerve/config.yaml")
-	}
-	var b strings.Builder
-
-	// Header: OFFSET | BRANCH | <svc1> <svc2> …
-	header := fmt.Sprintf("  %-7s  %-24s", "OFFSET", "BRANCH")
-	for _, id := range serviceIDsInOrder(v.cfg) {
-		header += "  " + fmt.Sprintf("%-*s", portCellWidth, id)
-	}
-	b.WriteString(subtitleStyle.Render(header))
-	b.WriteString("\n")
-
-	for i, row := range v.ports {
-		allocated := row.Branch != ""
-		branch := row.Branch
-		if branch == "" {
-			branch = "free"
-		}
-		var cells strings.Builder
-		for _, c := range row.Ports {
-			cells.WriteString("  ")
-			cells.WriteString(portCellText(c, allocated))
-		}
-		line := fmt.Sprintf("  %-7d  %-24s%s", row.Offset, branch, cells.String())
-
-		switch {
-		case i == v.cursors[tabPorts]:
-			b.WriteString(selectedRow.Render("▸ " + strings.TrimPrefix(line, "  ")))
-		case !allocated:
-			// A free offset row is muted overall, but a listening port on it (an
-			// external squatter) is colored inside portCellText, so render piecewise:
-			// the offset/branch prefix is muted; the already-styled cells pass through.
-			prefix := fmt.Sprintf("  %-7d  %-24s", row.Offset, branch)
-			b.WriteString(muted.Render(prefix))
-			b.WriteString(cells.String())
-		default:
-			b.WriteString(line)
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// portCellText renders one port cell: a marker (● listening / ○ free) plus the port
-// number, padded to portCellWidth. allocated reports whether nerve has claimed this
-// offset, which drives the color of a listening port (green when expected, red when an
-// external squatter is sitting on an offset nerve never allocated).
-func portCellText(c portCell, allocated bool) string {
-	marker := "○"
-	if c.Listening {
-		marker = "●"
-	}
-	text := fmt.Sprintf("%s %-*d", marker, portCellWidth-2, c.Port)
-	switch {
-	case c.Listening && allocated:
-		return statusOK.Render(text)
-	case c.Listening && !allocated:
-		// Something is bound on an offset nerve didn't allocate — flag it loudly.
-		return statusErr.Render(text)
-	case !c.Listening && allocated:
-		// Allocated to a worktree but nothing is up yet (dev server not started).
-		return statusWarn.Render(text)
-	default:
-		// Free and idle.
-		return muted.Render(text)
-	}
 }
