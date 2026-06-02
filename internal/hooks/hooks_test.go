@@ -58,6 +58,86 @@ func TestInstallPreservesUserHooks(t *testing.T) {
 	}
 }
 
+// TestInstallUninstallPreservesUnknownFields guards against silently dropping fields
+// nerve doesn't model (e.g. Claude Code's per-hook "timeout"). A user hook entry that
+// lives in a nerve-managed event must survive an Install → Uninstall round-trip with
+// its extra field intact.
+func TestInstallUninstallPreservesUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	existing := `{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "echo user-hook", "timeout": 30}]}
+    ]
+  }
+}`
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	installed, err := Install(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installed, `"timeout": 30`) {
+		t.Errorf("unknown field \"timeout\" lost during install:\n%s", installed)
+	}
+	if !strings.Contains(installed, "nerve env --inject # nerve-managed") {
+		t.Errorf("nerve hook not added during install:\n%s", installed)
+	}
+	if err := os.WriteFile(path, []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	uninstalled, changed, err := Uninstall(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected uninstall to report change")
+	}
+	if !strings.Contains(uninstalled, `"timeout": 30`) {
+		t.Errorf("unknown field \"timeout\" lost during uninstall:\n%s", uninstalled)
+	}
+	if !strings.Contains(uninstalled, "echo user-hook") {
+		t.Errorf("user hook lost during uninstall:\n%s", uninstalled)
+	}
+	if strings.Contains(uninstalled, "nerve env --inject") {
+		t.Errorf("nerve hook still present after uninstall:\n%s", uninstalled)
+	}
+
+	// The surviving user hook must still carry timeout as a number, not be mangled.
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(uninstalled), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range eventGroups(t, doc, "SessionStart") {
+		inner, _ := g["hooks"].([]any)
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if hm["command"] == "echo user-hook" {
+				if _, ok := hm["timeout"]; !ok {
+					t.Errorf("user hook lost its timeout field: %v", hm)
+				}
+			}
+		}
+	}
+}
+
+// TestInstallRejectsMalformedHooks ensures a non-object "hooks" value is reported as an
+// error instead of being silently overwritten (which would discard user data).
+func TestInstallRejectsMalformedHooks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"hooks": "oops"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(path, false); err == nil {
+		t.Fatal("expected error for non-object hooks value, got nil")
+	}
+}
+
 func TestInstallIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
