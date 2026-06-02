@@ -28,7 +28,7 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_PAT }}
 
       # Stage 2: only when a release was just cut, build + attach artifacts.
       - name: Checkout
